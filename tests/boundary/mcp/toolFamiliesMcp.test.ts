@@ -17,6 +17,7 @@ const scopedServer = (
     undefined,
     new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
     undefined,
+    false,
     advertisedToolFamilies,
   );
 
@@ -83,5 +84,21 @@ describe("MCP tool family advertising", () => {
         client.callTool({ name: "list_frida_devices" }),
       ).rejects.toThrow(/disabled/u);
     });
+  });
+
+  it("reflects the scope in availability reports", () => {
+    const server = scopedServer(new Set(["session"]));
+    registerCatalog(server);
+    // Status reporting must not advertise a tool the registration disables.
+    expect(server.advertisesTool("open_binary")).toBe(true);
+    expect(server.advertisesTool("analyze_javascript_application")).toBe(false);
+    expect(server.advertisesTool("inspect_macho")).toBe(false);
+  });
+
+  it("advertises every tool in availability reports when no scope is set", () => {
+    const server = scopedServer(undefined);
+    registerCatalog(server);
+    for (const { name } of TOOL_CONTRACTS)
+      expect(server.advertisesTool(name)).toBe(true);
   });
 });
