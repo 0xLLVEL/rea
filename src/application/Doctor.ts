@@ -543,7 +543,7 @@ export const systemDoctorHost = (
         platform,
         environment,
         resources,
-        selectedClientIds,
+        ...(selectedClientIds === undefined ? {} : { selectedClientIds }),
       }),
   };
 };
