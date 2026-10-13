@@ -93,12 +93,17 @@ export interface UninstallResult {
   readonly items: readonly UninstallItem[];
 }
 
+/** Applicability established once from product-specific discovery evidence. */
+export interface UninstallClient extends SetupClient {
+  readonly applicability?: "unverified";
+}
+
 /** Filesystem boundary used by the contained uninstall workflow. */
 export interface UninstallHost {
-  clients(): Promise<readonly SetupClient[]>;
+  clients(): Promise<readonly UninstallClient[]>;
   /** Report a configuration that cannot be read safely, before any removal. */
-  inspectClient(client: SetupClient): Promise<UninstallItem | undefined>;
-  removeClient(client: SetupClient): Promise<UninstallItem>;
+  inspectClient(client: UninstallClient): Promise<UninstallItem | undefined>;
+  removeClient(client: UninstallClient): Promise<UninstallItem>;
   inspectSkill?(): Promise<UninstallItem | undefined>;
   removeSkill(): Promise<UninstallItem>;
   purgeData(): Promise<readonly UninstallItem[]>;
@@ -184,7 +189,7 @@ export const runUninstall = async (
  * overwritten. A client that fails then still stops the remaining removals.
  */
 const removeAll = async (
-  clients: readonly SetupClient[],
+  clients: readonly UninstallClient[],
   purgeData: boolean,
   host: UninstallHost,
 ): Promise<UninstallItem[]> => {
@@ -227,26 +232,38 @@ export const systemUninstallHost = (
   const skillWriteBlocker = (path: string): string | undefined =>
     redirectedWriteBlocker(redirection, [path], "uninstall");
   return {
-    clients: () => {
-      const clients = supportedClients(home, platform, environment);
-      redirection = appDataRedirection(clients);
-      return Promise.resolve(
-        clients.flatMap((client) => [
-          ...uninstallConfigPaths(client).map((configPath) => ({
+    clients: async () => {
+      const supported = supportedClients(home, platform, environment);
+      redirection = appDataRedirection(supported);
+      const clients: UninstallClient[] = [];
+      for (const client of supported) {
+        // Shared configuration alone cannot establish product applicability.
+        // Missing or unreadable evidence stays unverified; owned rows in a
+        // readable configuration can still be removed independently.
+        let applicable = client.discoveryPaths === undefined;
+        for (const path of client.discoveryPaths ?? []) {
+          try {
+            await fileSystem.stat(path);
+            applicable = true;
+            break;
+          } catch {
+            // Keep the client unverified until one discovery path exists.
+          }
+        }
+        const applicability = applicable
+          ? {}
+          : { applicability: "unverified" as const };
+        for (const configPath of uninstallConfigPaths(client))
+          clients.push({ ...client, configPath, ...applicability });
+        if (client.zcodeFallbackPath !== undefined)
+          clients.push({
             ...client,
-            configPath,
-          })),
-          ...(client.zcodeFallbackPath === undefined
-            ? []
-            : [
-                {
-                  ...client,
-                  configPath: client.zcodeFallbackPath,
-                  format: "zcode_fallback" as const,
-                },
-              ]),
-        ]),
-      );
+            configPath: client.zcodeFallbackPath,
+            format: "zcode_fallback" as const,
+            ...applicability,
+          });
+      }
+      return clients;
     },
     inspectClient: async (client) => {
       const read = await readClientConfiguration(client, fileSystem);
@@ -343,11 +360,21 @@ type ClientConfigurationRead =
     };
 
 const readClientConfiguration = async (
-  client: SetupClient,
+  client: UninstallClient,
   fileSystem: UninstallFileSystem,
 ): Promise<ClientConfigurationRead> => {
+  const configurationFailure = (detail: string): ClientConfigurationRead =>
+    itemRead(
+      item(
+        client.name,
+        client.applicability === "unverified" ? "retained" : "failed",
+        client.applicability === "unverified"
+          ? `Product applicability could not be established. Shared configuration was retained without blocking other REA removals. ${detail}`
+          : detail,
+      ),
+    );
   if (client.configPathError !== undefined)
-    return itemRead(item(client.name, "failed", client.configPathError));
+    return configurationFailure(client.configPathError);
   if (client.format === "unsupported")
     return itemRead(
       item(
@@ -358,7 +385,10 @@ const readClientConfiguration = async (
       ),
     );
   const resolved = await resolveUninstallConfigPath(client, fileSystem);
-  if (typeof resolved !== "string") return itemRead(resolved);
+  if (typeof resolved !== "string")
+    return resolved.status === "failed"
+      ? configurationFailure(resolved.detail)
+      : itemRead(resolved);
   const transactionPath = resolved;
   let original: string;
   try {
@@ -366,30 +396,22 @@ const readClientConfiguration = async (
   } catch (cause: unknown) {
     const readFailure =
       cause instanceof RegularFileCleanupFailure ? cause.cause : cause;
-    return itemRead(
-      isMissing(cause)
-        ? item(client.name, "skipped", "Configuration does not exist.")
-        : item(
-            client.name,
-            "failed",
-            readFailure instanceof InvalidUtf8FileError
-              ? "Configuration is not valid UTF-8 and was not changed. Repair it, then rerun uninstall."
-              : "Configuration could not be read. Check file permissions, then rerun uninstall.",
-          ),
-    );
+    return isMissing(cause)
+      ? itemRead(item(client.name, "skipped", "Configuration does not exist."))
+      : configurationFailure(
+          readFailure instanceof InvalidUtf8FileError
+            ? "Configuration is not valid UTF-8 and was not changed. Repair it, then rerun uninstall."
+            : "Configuration could not be read. Check file permissions, then rerun uninstall.",
+        );
   }
   try {
     const parsed = parseClientConfiguration(original, client.format);
     return { kind: "configuration", transactionPath, original, parsed };
   } catch (cause: unknown) {
-    return itemRead(
-      item(
-        client.name,
-        "failed",
-        cause instanceof ClientConfigurationShapeError
-          ? `Configuration was not changed: ${cause.message}. Repair it, then rerun uninstall.`
-          : `Configuration is not valid ${client.format === "toml" || client.format === "grok" ? "TOML" : client.format === "opencode" ? "JSONC" : client.format === "hermes" || client.format === "dsh" ? "YAML" : "JSON"} and was not changed. Repair it, then rerun uninstall.`,
-      ),
+    return configurationFailure(
+      cause instanceof ClientConfigurationShapeError
+        ? `Configuration was not changed: ${cause.message}. Repair it, then rerun uninstall.`
+        : `Configuration is not valid ${client.format === "toml" || client.format === "grok" ? "TOML" : client.format === "opencode" ? "JSONC" : client.format === "hermes" || client.format === "dsh" ? "YAML" : "JSON"} and was not changed. Repair it, then rerun uninstall.`,
     );
   }
 };
@@ -432,7 +454,7 @@ const clientRegistrationRemoval = (
 };
 
 const removeClient = async (
-  client: SetupClient,
+  client: UninstallClient,
   fileSystem: UninstallFileSystem,
   writeBlocker?: () => string | undefined,
 ): Promise<UninstallItem> => {
