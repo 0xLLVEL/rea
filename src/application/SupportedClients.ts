@@ -35,6 +35,8 @@ export interface SetupClient {
   readonly msixPackage?: MsixPackageView;
   /** A running client can rewrite its configuration from memory. */
   readonly quitBeforeSetup?: boolean;
+  /** Product-specific applicability evidence when configuration storage is shared. */
+  readonly discoveryPaths?: readonly string[];
   readonly format?:
     | "json"
     | "toml"
@@ -96,6 +98,7 @@ type ClientDefinition = ClientDefinitionBase &
 interface ClientDefinitionBase {
   readonly name: string;
   readonly displayName: string;
+  readonly discoveryPaths?: (context: ClientPathContext) => readonly string[];
   readonly format: NonNullable<SetupClient["format"]>;
   readonly quitBeforeSetup?: boolean;
   readonly zcodeFallbackPath?: (context: ClientPathContext) => string;
@@ -713,6 +716,9 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     configPath: ({ home }: ClientPathContext) =>
       join(home, ".agents", "mcp.json"),
     markerPath: freebuffProfileDirectory,
+    discoveryPaths: (context: ClientPathContext) => [
+      freebuffProfileDirectory(context),
+    ],
     format: "json",
   },
   {
@@ -730,14 +736,19 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
  * directory override does not exist.
  */
 export const clientEvidencePaths = (
-  client: Pick<SetupClient, "configPath" | "configPaths" | "markerPath">,
+  client: Pick<
+    SetupClient,
+    "configPath" | "configPaths" | "markerPath" | "discoveryPaths"
+  >,
 ): readonly string[] => [
   ...new Set(
-    [
-      client.configPath,
-      ...(client.configPaths ?? []),
-      client.markerPath,
-    ].filter((path): path is string => path !== undefined && path.length > 0),
+    (
+      client.discoveryPaths ?? [
+        client.configPath,
+        ...(client.configPaths ?? []),
+        client.markerPath,
+      ]
+    ).filter((path): path is string => path !== undefined && path.length > 0),
   ),
 ];
 
@@ -805,6 +816,9 @@ export const supportedClients = (
         ...(definition.quitBeforeSetup === true
           ? { quitBeforeSetup: true }
           : {}),
+        ...(definition.discoveryPaths === undefined
+          ? {}
+          : { discoveryPaths: definition.discoveryPaths(context) }),
         format: definition.format,
       };
     } catch (cause: unknown) {
