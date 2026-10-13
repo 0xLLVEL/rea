@@ -223,6 +223,7 @@ export const systemUninstallHost = (
     selectedHome ?? homeDirectoryFromEnvironment(environment, platform);
   const resources = new ArtifactResourceScope();
   const fileSystem = selectedFileSystem ?? systemFileSystem(resources);
+  const preflightOwnedClients = new WeakSet<UninstallClient>();
   // Set with the client list: the package view that redirects this
   // process's AppData writes, if any.
   let redirection: MsixPackageView | undefined;
@@ -272,6 +273,7 @@ export const systemUninstallHost = (
       const removal = clientRegistrationRemoval(read.parsed, client);
       if (!removal.removeNative && removal.legacyPath === undefined)
         return undefined;
+      preflightOwnedClients.add(client);
       // A removal the running package would revert, or redirect into its
       // private storage, would leave the registration in place.
       const blocker = clientWriteBlocker(client);
@@ -280,7 +282,12 @@ export const systemUninstallHost = (
         : item(client.name, "failed", blocker);
     },
     removeClient: (client) =>
-      removeClient(client, fileSystem, () => clientWriteBlocker(client)),
+      removeClient(
+        client,
+        fileSystem,
+        () => clientWriteBlocker(client),
+        preflightOwnedClients.has(client),
+      ),
     inspectSkill: async () => {
       for (const destination of skillDestinations(
         home,
@@ -362,13 +369,16 @@ type ClientConfigurationRead =
 const readClientConfiguration = async (
   client: UninstallClient,
   fileSystem: UninstallFileSystem,
+  ownershipEstablished = false,
 ): Promise<ClientConfigurationRead> => {
+  const applicabilityUnverified =
+    client.applicability === "unverified" && !ownershipEstablished;
   const configurationFailure = (detail: string): ClientConfigurationRead =>
     itemRead(
       item(
         client.name,
-        client.applicability === "unverified" ? "retained" : "failed",
-        client.applicability === "unverified"
+        applicabilityUnverified ? "retained" : "failed",
+        applicabilityUnverified
           ? `Product applicability could not be established. Shared configuration was retained without blocking other REA removals. ${detail}`
           : detail,
       ),
@@ -457,8 +467,13 @@ const removeClient = async (
   client: UninstallClient,
   fileSystem: UninstallFileSystem,
   writeBlocker?: () => string | undefined,
+  preflightOwned = false,
 ): Promise<UninstallItem> => {
-  const read = await readClientConfiguration(client, fileSystem);
+  const read = await readClientConfiguration(
+    client,
+    fileSystem,
+    preflightOwned,
+  );
   if (read.kind === "item") return read.item;
   const { transactionPath, original, parsed } = read;
   const name = PRODUCT_IDENTITY.mcpServerKey;
