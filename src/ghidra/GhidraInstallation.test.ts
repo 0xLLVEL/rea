@@ -9,6 +9,7 @@ import {
   inspectGhidraInstallation,
   type GhidraExecutableHeaderProbe,
   type GhidraInstallationHost,
+  type GhidraInstallationInspection,
   type GhidraJavaObservation,
 } from "./GhidraInstallation.js";
 import {
@@ -1086,6 +1087,109 @@ describe("Ghidra JVM OS admission", () => {
       });
     },
   );
+});
+
+describe("Ghidra PATH discovery", () => {
+  const discovered = (
+    overrides: Partial<GhidraInstallationHost>,
+    environment: Readonly<NodeJS.ProcessEnv> = { PATH: "/usr/bin" },
+    platform: NodeJS.Platform = "linux",
+  ): GhidraInstallationInspection =>
+    inspectGhidraInstallation(
+      { environment, platform, architecture: "x64" },
+      host(overrides),
+    );
+
+  it("discovers an installation from a launcher linked into PATH", () => {
+    expect(
+      discovered({
+        resolvePathExecutable: (name) =>
+          name === "ghidra" ? "/opt/ghidra/ghidraRun" : undefined,
+      }),
+    ).toMatchObject({
+      status: "available",
+      installDir: INSTALL,
+      providerVersion: SUPPORTED_GHIDRA_VERSION,
+    });
+  });
+
+  it("prefers an explicit GHIDRA_INSTALL_DIR over PATH discovery", () => {
+    const probed: string[] = [];
+    const inspection = inspectGhidraInstallation(
+      {
+        environment: { PATH: "/usr/bin" },
+        installDir: INSTALL,
+        platform: "linux",
+        architecture: "x64",
+      },
+      host({
+        resolvePathExecutable: (name) => {
+          probed.push(name);
+          return "/elsewhere/ghidraRun";
+        },
+      }),
+    );
+    expect(probed).toEqual([]);
+    expect(inspection).toMatchObject({
+      status: "available",
+      installDir: INSTALL,
+    });
+  });
+
+  it("does not trust a launcher whose directory holds no Ghidra release", () => {
+    const inspection = discovered({
+      resolvePathExecutable: (name) =>
+        name === "ghidra" ? "/usr/bin/ghidra" : undefined,
+    });
+    expect(inspection).toMatchObject({
+      status: "unavailable",
+      rejection: { code: "executable_missing" },
+    });
+    expect(inspection.checks).toContainEqual(
+      expect.objectContaining({ name: "installation", status: "failed" }),
+    );
+  });
+
+  it("stays unconfigured when the host offers no PATH seam", () => {
+    expect(discovered({})).toMatchObject({
+      status: "unavailable",
+      rejection: { code: "not_configured" },
+    });
+  });
+
+  it("stays unconfigured when PATH is absent or empty", () => {
+    for (const environment of [{}, { PATH: "" }] as const)
+      expect(
+        discovered(
+          { resolvePathExecutable: () => "/opt/ghidra/ghidraRun" },
+          environment,
+        ),
+      ).toMatchObject({ rejection: { code: "not_configured" } });
+  });
+
+  it("resolves a Windows launcher under the inspected platform", () => {
+    expect(
+      discovered(
+        {
+          readText: (path) =>
+            path === WINDOWS_PROPERTIES
+              ? `application.version=${SUPPORTED_GHIDRA_VERSION}\napplication.java.min=${String(SUPPORTED_GHIDRA_JAVA_MAJOR)}\n`
+              : undefined,
+          executable: (path) =>
+            path === WINDOWS_HEADLESS || path === WINDOWS_DECOMPILER,
+          // The native-decompiler check rejects a JVM whose os.name does not
+          // match the platform under inspection.
+          probeJava: () => ({ ...JAVA, osName: "Windows 11" }),
+          resolvePathExecutable: (name) =>
+            name === "ghidra.bat"
+              ? "C:\\tools\\ghidra_12.1.4_PUBLIC\\ghidraRun.bat"
+              : undefined,
+        },
+        { Path: "C:\\Windows" },
+        "win32",
+      ),
+    ).toMatchObject({ status: "available", installDir: WINDOWS_INSTALL });
+  });
 });
 
 describe("Ghidra Java probe os.arch extraction", () => {

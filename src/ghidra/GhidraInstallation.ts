@@ -8,6 +8,7 @@ import {
   openSync,
   readFileSync,
   readSync,
+  realpathSync,
   statSync,
 } from "node:fs";
 import { posix, win32 } from "node:path";
@@ -293,7 +294,24 @@ export interface GhidraInstallationHost {
     command: string,
     environment: NodeJS.ProcessEnv,
   ): GhidraJavaObservation | undefined;
+  /**
+   * Resolve one executable name on the host PATH to its canonical path.
+   * An omitted seam, or an absent name, leaves installation discovery
+   * dependent on GHIDRA_INSTALL_DIR alone.
+   */
+  resolvePathExecutable?(
+    name: string,
+    environment: Readonly<NodeJS.ProcessEnv>,
+  ): string | undefined;
 }
+
+/** Launcher names Ghidra ships at an extracted release root, in probe order. */
+const PATH_LAUNCHER_NAMES: readonly string[] = [
+  "ghidra",
+  "ghidraRun",
+  "ghidra.bat",
+  "ghidraRun.bat",
+];
 
 interface GhidraInstallationCoordinates {
   readonly installDir: string | null;
@@ -403,7 +421,8 @@ const installationCoordinates = (
   host: GhidraInstallationHost,
 ): GhidraInstallationCoordinates => {
   const path = platform === "win32" ? win32 : posix;
-  const installDir = options.installDir ?? null;
+  const installDir =
+    options.installDir ?? discoveredInstallDir(options, platform, host) ?? null;
   const applicationPropertiesPath =
     installDir === null
       ? null
@@ -483,6 +502,38 @@ const installationCoordinates = (
   };
 };
 
+/**
+ * Derive an installation root from a Ghidra launcher found on PATH.
+ *
+ * Ghidra ships its launcher at the release root, and distributions commonly
+ * link it into PATH (for example `/usr/bin/ghidra -> /opt/ghidra/ghidraRun`),
+ * so the canonical launcher's parent directory is the root holding
+ * `Ghidra/application.properties`. A launcher whose parent does not hold that
+ * file is rejected by the ordinary installation check rather than trusted.
+ */
+const discoveredInstallDir = (
+  options: GhidraInstallationOptions,
+  platform: NodeJS.Platform,
+  host: GhidraInstallationHost,
+): string | undefined => {
+  const resolve = host.resolvePathExecutable;
+  if (resolve === undefined) return undefined;
+  // Discovery belongs to the caller-selected environment: an absent or empty
+  // PATH means nothing was supplied to search, whatever the seam would report.
+  // Node resolves variable names without regard to case on Windows, and callers
+  // pass `process.env` itself, so `Path` covers a caller-built environment.
+  const search = options.environment.PATH ?? options.environment.Path;
+  if (search === undefined || search.length === 0) return undefined;
+  const path = platform === "win32" ? win32 : posix;
+  for (const name of PATH_LAUNCHER_NAMES) {
+    const launcher = resolve(name, options.environment);
+    if (launcher === undefined) continue;
+    const installDir = path.dirname(launcher);
+    if (installDir.length > 0 && path.isAbsolute(installDir)) return installDir;
+  }
+  return undefined;
+};
+
 const installationChecks = ({
   coordinates,
   platform,
@@ -557,8 +608,10 @@ const configurationCheck = (
       name: "configuration",
       passed: installDir !== null,
       code: "not_configured",
-      detail: installDir ?? "GHIDRA_INSTALL_DIR is not set",
-      remediation: `Set GHIDRA_INSTALL_DIR to an extracted Ghidra ${ghidraReleaseLine()} release directory.`,
+      detail:
+        installDir ??
+        "GHIDRA_INSTALL_DIR is not set and no Ghidra launcher was found on PATH",
+      remediation: `Set GHIDRA_INSTALL_DIR to an extracted Ghidra ${ghidraReleaseLine()} release directory, or put that release's ghidra launcher on PATH.`,
     });
   const settings = relative.join(" and ");
   return installationCheck({
@@ -836,6 +889,26 @@ const javaRemediation = (
 };
 
 const systemGhidraInstallationHost = (): GhidraInstallationHost => ({
+  resolvePathExecutable(name, environment) {
+    const path = process.platform === "win32" ? win32 : posix;
+    const search = environment.PATH ?? environment.Path;
+    if (search === undefined || search.length === 0) return undefined;
+    for (const entry of search.split(path.delimiter)) {
+      if (entry.length === 0) continue;
+      const candidate = path.resolve(entry, name);
+      if (!executablePath(candidate)) continue;
+      try {
+        // Distributions link the launcher into PATH; the canonical path is
+        // what identifies the release root the launcher belongs to.
+        return realpathSync(candidate);
+      } catch (cause: unknown) {
+        // best-effort cleanup: an unresolvable symlink is not a discovery.
+        void cause;
+        return undefined;
+      }
+    }
+    return undefined;
+  },
   readText(path) {
     try {
       // Ghidra loads this file with Properties.load(InputStream), which maps
