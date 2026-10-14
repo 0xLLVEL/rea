@@ -701,6 +701,9 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     configPath: [".zcode", "cli", "config.json"],
     markerPath: [".zcode", "cli"],
     skillPath: [".zcode", "skills"],
+    discoveryPaths: ({ home }: ClientPathContext) => [
+      join(home, ".zcode", "cli"),
+    ],
     format: "zcode",
   },
   {
