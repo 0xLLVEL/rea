@@ -39,7 +39,6 @@ import {
   supportedClients,
   type SetupClient,
 } from "./SupportedClients.js";
-import { access } from "node:fs/promises";
 import {
   redirectedWriteBlocker,
   type MsixPackageView,
@@ -214,6 +213,36 @@ const removeAll = async (
   return items;
 };
 
+/**
+ * Ownership is a readable, recognizable REA-owned row, never the shared
+ * file's existence. An unrelated malformed file must not establish ownership;
+ * it stays retained without blocking other removals.
+ */
+const hasOwnershipEvidence = async (
+  client: UninstallClient,
+  fileSystem: UninstallFileSystem,
+): Promise<boolean> => {
+  for (const path of clientOwnershipEvidencePaths(client)) {
+    let original: string;
+    try {
+      original = await fileSystem.readText(path);
+    } catch {
+      // Missing or unreadable storage proves nothing; keep scanning.
+      continue;
+    }
+    let parsed: ClientConfigurationDocument;
+    try {
+      parsed = parseClientConfiguration(original, client.format);
+    } catch {
+      // Malformed shared data is retained, never ownership evidence.
+      continue;
+    }
+    const removal = clientRegistrationRemoval(parsed, client);
+    if (removal.removeNative || removal.legacyPath !== undefined) return true;
+  }
+  return false;
+};
+
 /** Create uninstall effects contained to detected client configs and REA-owned paths. */
 export const systemUninstallHost = (
   selectedHome: string | undefined = undefined,
@@ -272,78 +301,10 @@ export const systemUninstallHost = (
       }
       return clients;
     },
-  };
-};
-
-const hasOwnershipEvidence = async (
-  client: UninstallClient,
-  fileSystem: UninstallFileSystem,
-): Promise<boolean> => {
-  for (const path of clientOwnershipEvidencePaths(client)) {
-    try {
-      await access(path);
-      return true;
-    } catch {
-      // Keep scanning; one missing path does not establish absence.
-    }
-  }
-  return false;
-};
-
-const systemUninstallHost = (
-  selectedHome: string | undefined = undefined,
-  selectedFileSystem: UninstallFileSystem | undefined = undefined,
-  environment: Readonly<NodeJS.ProcessEnv> = process.env,
-  platform: NodeJS.Platform = process.platform,
-): UninstallHost => {
-  const home =
-    selectedHome ?? homeDirectoryFromEnvironment(environment, platform);
-  const resources = new ArtifactResourceScope();
-  const fileSystem = selectedFileSystem ?? systemFileSystem(resources);
-  const preflightOwnedClients = new WeakSet<UninstallClient>();
-  let redirection: MsixPackageView | undefined;
-  const skillWriteBlocker = (path: string): string | undefined =>
-    redirectedWriteBlocker(redirection, [path], "uninstall");
-  return {
-    clients: async () => {
-      const supported = supportedClients(home, platform, environment);
-      redirection = appDataRedirection(supported);
-      const clients: UninstallClient[] = [];
-      for (const client of supported) {
-        // Shared configuration alone cannot establish product applicability.
-        // Missing or unreadable evidence stays unverified; owned rows in a
-        // readable configuration can still be removed independently.
-        let applicable = client.discoveryPaths === undefined;
-        for (const path of client.discoveryPaths ?? []) {
-          try {
-            await fileSystem.stat(path);
-            applicable = true;
-            break;
-          } catch {
-            // Keep the client unverified until one discovery path exists.
-          }
-        }
-        const applicability = applicable
-          ? {}
-          : { applicability: "unverified" as const };
-        for (const configPath of uninstallConfigPaths(client))
-          clients.push({ ...client, configPath, ...applicability });
-        if (applicable && client.zcodeFallbackPath !== undefined)
-          clients.push({
-            ...client,
-            configPath: client.zcodeFallbackPath,
-            format: "zcode_fallback" as const,
-            ...applicability,
-          });
-        // Shared storage is inspected once and the decision is reported once.
-        // See ClientRegistrationStatus.sharedRegistration for the ownership model.
-      }
-      return clients;
-    },
     inspectClient: async (client) => {
       const ownershipEstablished =
         client.sharedRegistration === true &&
-        (await clientOwnershipEvidencePaths(client)).length > 0 &&
+        clientOwnershipEvidencePaths(client).length > 0 &&
         (await hasOwnershipEvidence(client, fileSystem));
       const read = await readClientConfiguration(
         client,
