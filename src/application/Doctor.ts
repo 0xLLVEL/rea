@@ -15,11 +15,18 @@ import {
 } from "../domain/runtimeVersion.js";
 import { installedCaskAppdir, probeHomebrew } from "./homebrew.js";
 import {
-  linuxHopperBinarySupported,
+  macHopperApplicationRoots,
+  macHopperRenamedLauncherCandidates,
+} from "./MacHopperPaths.js";
+import {
+  inspectLinuxHopperLauncher,
   linuxSharedLibrariesAvailable,
   readLinuxDistribution,
   type LinuxDistribution,
 } from "./LinuxHopper.js";
+import type { Result } from "../domain/result.js";
+import type { HopperReleaseError } from "./HopperReleaseFeed.js";
+import type { VerifiedLinuxHopperLauncher } from "./LinuxHopperPublisher.js";
 import {
   readInstalledSkillIdentity,
   type InstalledSkillIdentity,
@@ -32,6 +39,7 @@ import {
   type ClientRegistrationStatus,
   type UnhealthyClientRegistrationStatus,
 } from "./ClientRegistrationStatus.js";
+import type { ProviderRequestBudgetResolver } from "./ClientRegistrationEnvironment.js";
 import {
   collectDoctorDiagnostics,
   doctorHealthy,
@@ -53,6 +61,7 @@ export interface DoctorCheck {
     | "unsupported_host"
     | "unsupported_target"
     | "missing_analysis_engine"
+    | "unknown"
     | "config_drift";
   readonly detail?: string;
   readonly details?: Readonly<Record<string, JsonValue>>;
@@ -95,16 +104,21 @@ export interface DoctorHost {
   /** Route-specific target admission details, when supplied by the host. */
   inspectTarget?(path: string): Promise<DoctorCheck>;
   executable(path: string): Promise<boolean>;
-  supportedLinuxHopper(path: string): Promise<boolean>;
+  inspectLinuxHopper(
+    path: string,
+  ): Promise<Result<VerifiedLinuxHopperLauncher, HopperReleaseError>>;
   linuxDemoRuntimeCheck(): Promise<DoctorCheck>;
   brewHopperPath(): Promise<string | undefined>;
   manualHopperPaths(): Promise<readonly string[]>;
   providerInspections?(): Promise<readonly DoctorProviderInspection[]>;
+  /** Resolve a parsed upstream request budget from the effective client environment. */
+  resolveProviderRequestBudget?: ProviderRequestBudgetResolver;
   /** Validated provider settings preserved by setup, independent of readiness. */
   providerRegistrationEnvironment?(): Readonly<Record<string, string>>;
   installationPaths?(): Promise<readonly string[]>;
+  /** Undefined checks installed skill roots; explicit selections stay scoped. */
   installedSkillIdentity?(
-    clientIds: readonly string[],
+    clientIds: readonly string[] | undefined,
   ): Promise<InstalledSkillIdentity | undefined>;
   close?(): Promise<string | undefined>;
   clientRegistrations?(
@@ -216,7 +230,11 @@ const inspectDoctor = async (
     providerInspections,
   } = await collectDoctorDiagnostics(target, host);
   const identity = await collectDoctorIdentity(host, scope);
-  const checks = [...diagnosticChecks, ...identity.checks];
+  const checks = [
+    ...diagnosticChecks,
+    ...identity.checks,
+    ...registrationAdvisoryChecks(identity.value.registrations),
+  ];
   const providers = {
     hopperAvailable:
       hopperPath !== undefined &&
@@ -247,6 +265,22 @@ const inspectDoctor = async (
     identity: identity.value,
   };
 };
+
+const registrationAdvisoryChecks = (
+  registrations: readonly ClientRegistrationStatus[],
+): readonly DoctorCheck[] =>
+  registrations.flatMap(({ client, advisory }) =>
+    advisory === undefined
+      ? []
+      : [
+          {
+            name: `registration_timeout:${client}`,
+            ok: true,
+            classification: "healthy" as const,
+            detail: advisory,
+          },
+        ],
+  );
 
 const closeDoctorHost = async (
   host: DoctorHost,
@@ -289,9 +323,7 @@ const collectDoctorIdentity = async (
   const registrations = (await host.clientRegistrations?.(scope.clients)) ?? [];
   const skillClientIds =
     scope.skill_clients ??
-    (scope.mode === "audit-wide"
-      ? registrations.map(({ client }) => client)
-      : scope.clients);
+    (scope.clients.length > 0 ? scope.clients : undefined);
   const installedSkillIdentity =
     await host.installedSkillIdentity?.(skillClientIds);
   const skillAligned = skillIdentityAligned(installedSkillIdentity);
@@ -387,7 +419,7 @@ const registrationCheck = (
 ): DoctorCheck => ({
   name: `registration:${registration.client}`,
   ok: false,
-  classification: "config_drift",
+  classification: registration.state === "unknown" ? "unknown" : "config_drift",
   detail: registration.config_path,
   remediation: registration.remediation,
 });
@@ -409,6 +441,7 @@ export interface SystemDoctorHostOptions {
   readonly providerRegistrationEnvironment?: () => Readonly<
     Record<string, string>
   >;
+  readonly resolveProviderRequestBudget?: ProviderRequestBudgetResolver;
   readonly linuxDemoRuntimeCheck?: () => Promise<DoctorCheck>;
 }
 
@@ -486,7 +519,7 @@ export const systemDoctorHost = (
       ),
     linuxDemoRuntimeCheck:
       options.linuxDemoRuntimeCheck ?? uncomposedLinuxDemoRuntimeCheck,
-    supportedLinuxHopper: linuxHopperBinarySupported,
+    inspectLinuxHopper: (path) => inspectLinuxHopperLauncher(path, environment),
     async brewHopperPath() {
       return probeHomebrew(async (command) => {
         let caskroom: string;
@@ -525,6 +558,9 @@ export const systemDoctorHost = (
           providerRegistrationEnvironment:
             options.providerRegistrationEnvironment,
         }),
+    ...(options.resolveProviderRequestBudget === undefined
+      ? {}
+      : { resolveProviderRequestBudget: options.resolveProviderRequestBudget }),
     async ilspyCmdVersion(path) {
       try {
         await access(path, constants.X_OK);
@@ -578,6 +614,12 @@ export const systemDoctorHost = (
         environment,
         resources,
         ...(selectedClientIds === undefined ? {} : { selectedClientIds }),
+        ...(options.resolveProviderRequestBudget === undefined
+          ? {}
+          : {
+              resolveProviderRequestBudget:
+                options.resolveProviderRequestBudget,
+            }),
       }),
   };
 };
@@ -624,19 +666,22 @@ const uncomposedLinuxDemoRuntimeCheck = (): Promise<DoctorCheck> =>
   });
 
 const manualHopperPaths = async (home: string): Promise<readonly string[]> => {
-  const paths: string[] = [];
-  for (const root of ["/Applications", join(home, "Applications")]) {
+  const roots = macHopperApplicationRoots(home);
+  const bundleNamesByRoot = new Map<string, readonly string[]>();
+  for (const root of roots) {
     try {
-      for (const entry of await readdir(root, { withFileTypes: true })) {
-        if (entry.isDirectory() && /^Hopper.*\.app$/i.test(entry.name))
-          paths.push(join(root, entry.name, "Contents/MacOS/hopper"));
-      }
+      bundleNamesByRoot.set(
+        root,
+        (await readdir(root, { withFileTypes: true }))
+          .filter((entry) => entry.isDirectory())
+          .map(({ name }) => name),
+      );
     } catch (cause: unknown) {
       // A missing or unreadable optional application directory is not fatal.
       void cause;
     }
   }
-  return paths;
+  return macHopperRenamedLauncherCandidates(home, bundleNamesByRoot);
 };
 
 const uniqueLines = (value: string): string[] => [
