@@ -17,6 +17,10 @@ import {
   reconstructionObligationLedgerSchema,
 } from "../domain/reconstructionObligationLedgerSchemas.js";
 import {
+  androidJniNamesInputSchema,
+  androidJniNamesResultSchema,
+} from "../domain/android/androidJniNames.js";
+import {
   androidApplicationProjectionInputSchema,
   androidApplicationProjectionResultSchema,
 } from "../domain/android/androidApplication.js";
@@ -317,6 +321,30 @@ export const APPLICATION_TOOL_CONTRACTS = [
       },
     ],
   },
+  {
+    name: "project_android_jni_names",
+    ...toolContractMetadata("project_android_jni_names"),
+    description:
+      "Project expected JNI short/long symbol names and the JNA exact name for caller-selected DEX methods without reading an APK or native library. Reports per-method mangled names, overload group sizes, and explicit unknowns for RegisterNatives registration and runtime loading; a name match never establishes invocation.",
+    kind: "application",
+    inputSchema: androidJniNamesInputSchema,
+    outputSchema: evidenceResultOf(androidJniNamesResultSchema),
+    examples: [
+      {
+        title: "Project expected JNI names for native methods",
+        input: {
+          class_name: "de.markusfisch.android.zxingcpp.ZxingCpp",
+          methods: [
+            {
+              method_name: "readYBuffer",
+              dex_descriptor:
+                "(Ljava/nio/ByteBuffer;IIIIIILde/markusfisch/android/zxingcpp/ZxingCpp$ReaderOptions;)Ljava/util/List;",
+            },
+          ],
+        },
+      },
+    ],
+  },
 ] as const satisfies readonly ToolContract[];
 
 /** Resolve one named application contract without relying on array position. */
@@ -350,6 +378,9 @@ export function applicationToolContract(
 export function applicationToolContract(
   name: "project_harmony_application_graph",
 ): (typeof APPLICATION_TOOL_CONTRACTS)[9];
+export function applicationToolContract(
+  name: "project_android_jni_names",
+): (typeof APPLICATION_TOOL_CONTRACTS)[10];
 export function applicationToolContract(
   name: (typeof APPLICATION_TOOL_CONTRACTS)[number]["name"],
 ): (typeof APPLICATION_TOOL_CONTRACTS)[number] {

@@ -123,6 +123,19 @@ rea trace-android-references /path/Example.apk example.MainActivity --method-nam
 rea trace-android-references /path/Example.apk example.MainActivity --method-name select --overload-index 1
 ```
 
+Project expected native symbols for DEX-declared methods without opening an APK:
+
+```sh
+rea project-android-jni-names '{"class_name": "example.MainActivity", "methods": [{"method_name": "nativeInit", "dex_descriptor": "()V"}]}'
+```
+
+Equivalent MCP method is `project_android_jni_names`. It reports JNI short/long
+names and the JNA exact name per method from caller-selected declarations, so
+an expected `Java_pkg_Class_method` name can be searched in an extracted `.so`
+with the native providers. Nested classes need the binary `$` form. A name
+match is a static binding hypothesis, not proof of loading or invocation;
+`RegisterNatives` registration stays unknown.
+
 Equivalent MCP methods are `inspect_android_package`, `search_android_classes`,
 `inspect_android_class`, `inspect_android_method` and `trace_android_references`.
 Every request includes `path`. Class/method operations use `class_name`,

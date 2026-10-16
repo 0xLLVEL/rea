@@ -152,6 +152,7 @@ export const CLI_COMMANDS = Object.freeze({
   buildReconstructionObligationLedger: "build-reconstruction-obligation-ledger",
   evaluateReconstructionCoverage: "evaluate-reconstruction-coverage",
   projectAndroidApplicationGraph: "project-android-application-graph",
+  projectAndroidJniNames: "project-android-jni-names",
   projectAppleApplicationGraph: "project-apple-application-graph",
   projectHarmonyApplicationGraph: "project-harmony-application-graph",
 });
