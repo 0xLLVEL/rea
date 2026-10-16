@@ -21,6 +21,10 @@ import {
   androidJniNamesResultSchema,
 } from "../domain/android/androidJniNames.js";
 import {
+  androidAttackSurfaceInputSchema,
+  androidAttackSurfaceResultSchema,
+} from "../domain/android/androidAttackSurface.js";
+import {
   androidApplicationProjectionInputSchema,
   androidApplicationProjectionResultSchema,
 } from "../domain/android/androidApplication.js";
@@ -345,6 +349,27 @@ export const APPLICATION_TOOL_CONTRACTS = [
       },
     ],
   },
+  {
+    name: "project_android_attack_surface",
+    ...toolContractMetadata("project_android_attack_surface"),
+    description:
+      "Project structural attack-surface facts from caller-selected Android package declarations (permissions plus inspect_android_package components). Separates exported components without a guarding permission from guarded and export-unknown ones, indexes intent actions, and reports foreground-service types and provider authorities without claiming protection levels, reachability, or exploitability.",
+    kind: "application",
+    inputSchema: androidAttackSurfaceInputSchema,
+    outputSchema: evidenceResultOf(androidAttackSurfaceResultSchema),
+    examples: [
+      {
+        title: "Rank exported components from package declarations",
+        input: {
+          package_name: "io.example",
+          target_sdk: "30",
+          permissions: ["android.permission.INTERNET"],
+          components: [],
+          component_coverage: "complete",
+        },
+      },
+    ],
+  },
 ] as const satisfies readonly ToolContract[];
 
 /** Resolve one named application contract without relying on array position. */
@@ -381,6 +406,9 @@ export function applicationToolContract(
 export function applicationToolContract(
   name: "project_android_jni_names",
 ): (typeof APPLICATION_TOOL_CONTRACTS)[10];
+export function applicationToolContract(
+  name: "project_android_attack_surface",
+): (typeof APPLICATION_TOOL_CONTRACTS)[11];
 export function applicationToolContract(
   name: (typeof APPLICATION_TOOL_CONTRACTS)[number]["name"],
 ): (typeof APPLICATION_TOOL_CONTRACTS)[number] {

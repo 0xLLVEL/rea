@@ -9,6 +9,7 @@ import { registerCoverageTools } from "./registerApplicationTools/coverage.js";
 import { registerReconstructionObligationLedgerTool } from "./registerApplicationTools/obligationLedger.js";
 import { registerProjectMobileApplicationGraphTools } from "./registerApplicationTools/projectMobileApplicationGraph.js";
 import { registerProjectAndroidJniNamesTool } from "./registerApplicationTools/projectAndroidJniNames.js";
+import { registerProjectAndroidAttackSurfaceTool } from "./registerApplicationTools/projectAndroidAttackSurface.js";
 import type { ApplicationToolRegistration } from "./registerApplicationTools/types.js";
 
 /** Register provider-neutral JavaScript application graph workflows. */
@@ -25,4 +26,5 @@ export const registerApplicationTools = (
   registerCoverageTools(server, options);
   registerProjectMobileApplicationGraphTools(server, options);
   registerProjectAndroidJniNamesTool(server, options);
+  registerProjectAndroidAttackSurfaceTool(server, options);
 };

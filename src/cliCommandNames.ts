@@ -153,6 +153,7 @@ export const CLI_COMMANDS = Object.freeze({
   evaluateReconstructionCoverage: "evaluate-reconstruction-coverage",
   projectAndroidApplicationGraph: "project-android-application-graph",
   projectAndroidJniNames: "project-android-jni-names",
+  projectAndroidAttackSurface: "project-android-attack-surface",
   projectAppleApplicationGraph: "project-apple-application-graph",
   projectHarmonyApplicationGraph: "project-harmony-application-graph",
 });

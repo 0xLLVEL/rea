@@ -7,6 +7,7 @@ import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { androidApplicationProjectionInputSchema } from "../domain/android/androidApplication.js";
+import { androidAttackSurfaceInputSchema } from "../domain/android/androidAttackSurface.js";
 import { androidJniNamesInputSchema } from "../domain/android/androidJniNames.js";
 import { appleApplicationProjectionInputSchema } from "../domain/apple/appleApplication.js";
 import { harmonyApplicationProjectionInputSchema } from "../domain/harmony/harmonyApplication.js";
@@ -121,6 +122,22 @@ export const registerApplicationCommands = (
       const { projectAndroidJniNamesEvidence } =
         await import("../application/android/AndroidJniNamesService.js");
       const result = projectAndroidJniNamesEvidence(input);
+      return result.ok
+        ? { ok: true, value: jsonValueSchema.parse(result.value) }
+        : result;
+    },
+  });
+  registerJsonCommand({
+    cli,
+    logger,
+    name: CLI_COMMANDS.projectAndroidAttackSurface,
+    description:
+      "Project structural attack-surface facts from Android package declarations",
+    inputSchema: androidAttackSurfaceInputSchema,
+    workflow: async (input) => {
+      const { projectAndroidAttackSurfaceEvidence } =
+        await import("../application/android/AndroidAttackSurfaceService.js");
+      const result = projectAndroidAttackSurfaceEvidence(input);
       return result.ok
         ? { ok: true, value: jsonValueSchema.parse(result.value) }
         : result;
