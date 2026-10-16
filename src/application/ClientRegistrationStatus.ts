@@ -227,11 +227,16 @@ export const readClientRegistrationInspections = async (
             }
           : client;
       const registration = parseRegistration(raw, effectiveClient);
+      // Derived tool-timeout facts exist only for Kimi/Codex registrations
+      // (mirroring setup); other clients must not be invalidated by a
+      // resolver the runtime never consults for them.
       const registrationEnvironment = clientRegistrationEnvironmentDetails(
         parsed,
         {},
         "effective",
-        options.resolveProviderRequestBudget,
+        client.name === "codex" || client.name === "kimi"
+          ? options.resolveProviderRequestBudget
+          : undefined,
       );
       if (!registrationEnvironment.ok) {
         const issues = registrationEnvironment.error.settings.map(
