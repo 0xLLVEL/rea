@@ -160,8 +160,14 @@ the same source byte limit and explicit truncation reporting.
 ## Interpret the result
 
 - Package inspection retains decoded manifest XML, summary declarations,
-  permissions and class/resource counts. Summary fields are extracted by the
-  upstream engine and should be checked against the retained XML when needed.
+  permissions, structured manifest components and class/resource counts.
+  `components` lists activities, activity-aliases, services, receivers and
+  providers with their declared and resolved names, `exported` plus its
+  `exported_source` (`explicit`, `implicit`, or `unknown` when an
+  intent-filtered component omits `android:exported` on targetSdk 31+),
+  permission, intent filters and provider authorities. Summary fields are
+  extracted by the upstream engine and should be checked against the retained
+  XML when needed.
   Signature verification is explicitly `not_performed`.
 - Class search consumes all pages and checks their counts. An empty `query`
   inventories all class-name rows; class names are decompiler representations.

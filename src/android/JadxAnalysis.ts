@@ -16,6 +16,7 @@ import {
   jadxXrefsSchema,
   normalizeJadxText,
 } from "./JadxProtocol.js";
+import { projectManifestComponents } from "../domain/android/androidManifestComponents.js";
 import { JADX_RELEASE } from "./JadxRelease.js";
 
 /** The adapter consumes tool payloads, never provider RPC details outside this layer. */
@@ -115,6 +116,12 @@ const inspectPackage = async (
   const manifest = normalizeJadxText(
     await tools.text("get_android_manifest", {}),
   );
+  const projected = projectManifestComponents({
+    manifestText: manifest.text,
+    manifestStatus: manifest.status,
+    packageName: app.package || null,
+    targetSdk: app.target_sdk || null,
+  });
   return androidResultSchemas.inspect_android_package.parse({
     engine,
     package_name: app.package || null,
@@ -124,6 +131,9 @@ const inspectPackage = async (
     target_sdk: app.target_sdk || null,
     permissions: app.permissions,
     manifest,
+    components: [...projected.components],
+    component_coverage: projected.coverage,
+    component_unknowns: [...projected.unknowns],
     class_count: loaded.class_count,
     resource_count: loaded.resource_count,
     signature_verification: "not_performed",

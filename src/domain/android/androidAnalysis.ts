@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { localPathStringSchema } from "../localPath.js";
+import { androidManifestComponentSchema } from "./androidManifestComponents.js";
 
 const target = {
   path: localPathStringSchema.describe(
@@ -133,6 +134,9 @@ export const androidResultSchemas = {
     target_sdk: z.string().nullable(),
     permissions: z.array(z.string()),
     manifest: textCoverage,
+    components: z.array(androidManifestComponentSchema),
+    component_coverage: z.enum(["complete", "partial", "unknown"]),
+    component_unknowns: z.array(z.string()),
     class_count: z.number().int().nonnegative(),
     resource_count: z.number().int().nonnegative(),
     signature_verification: z.literal("not_performed"),

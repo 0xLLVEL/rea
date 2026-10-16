@@ -173,6 +173,11 @@ it("preserves partial/unknown declarations and Unicode text while rejecting miss
     target_sdk: null,
     permissions: [],
     manifest: { status: "partial", text: "a😀b", reported_total_bytes: null },
+    components: [],
+    component_coverage: "unknown",
+    component_unknowns: [
+      "The decoded manifest is not well-formed XML; component inventory is unknown.",
+    ],
     class_count: 0,
     resource_count: 0,
     signature_verification: "not_performed",
