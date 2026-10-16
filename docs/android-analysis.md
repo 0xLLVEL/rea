@@ -142,6 +142,11 @@ export-unknown ones, with an intent-action index, foreground-service types and
 provider authorities. Findings rank static declarations only; protection levels,
 reachability and exploitability stay unknown.
 
+For packed or split targets, follow the
+[packed and split APK playbook](android-packed-analysis.md): static pack
+detection, full split acquisition, isolated emulator dumping, and static
+re-analysis with linked provenance.
+
 Equivalent MCP methods are `inspect_android_package`, `search_android_classes`,
 `inspect_android_class`, `inspect_android_method` and `trace_android_references`.
 Every request includes `path`. Class/method operations use `class_name`,
