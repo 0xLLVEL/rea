@@ -1,11 +1,20 @@
 import { z } from "zod";
 
-import { dexDescriptorSchema } from "./androidAnalysis.js";
+/**
+ * DEX method prototype syntax, kept locally: REA's class inventory no longer
+ * reports prototypes, so long-name projection needs a caller-supplied
+ * descriptor and rejects malformed ones instead of guessing.
+ */
+const dexDescriptorInputSchema = z
+  .string()
+  .regex(
+    /^\((?:\[*(?:[ZBSCIJFD]|L[^;\x28\x29]+;))*\)(?:V|\[*(?:[ZBSCIJFD]|L[^;\x28\x29]+;))$/u,
+  );
 
 /** One caller-selected DEX method awaiting native-symbol correlation. */
 export const jniMethodInputSchema = z.strictObject({
   method_name: z.string().min(1),
-  dex_descriptor: dexDescriptorSchema,
+  dex_descriptor: dexDescriptorInputSchema.nullable(),
 });
 
 /** Caller-selected class plus the DEX methods to project. */
@@ -20,9 +29,9 @@ export const androidJniNamesInputSchema = z.strictObject({
 /** Expected native symbol spellings for one DEX method. */
 export const jniNameProjectionSchema = z.strictObject({
   method_name: z.string(),
-  dex_descriptor: dexDescriptorSchema,
+  dex_descriptor: dexDescriptorInputSchema.nullable(),
   jni_short_name: z.string(),
-  jni_long_name: z.string(),
+  jni_long_name: z.string().nullable(),
   jna_expected_name: z.string(),
   overload_group_size: z.number().int().min(1),
 });
@@ -92,7 +101,10 @@ export const projectJniNames = (
         method_name: method.method_name,
         dex_descriptor: method.dex_descriptor,
         jni_short_name: `Java_${classPart}_${methodPart}`,
-        jni_long_name: `Java_${classPart}_${methodPart}__${argumentDescriptor(method.dex_descriptor)}`,
+        jni_long_name:
+          method.dex_descriptor === null
+            ? null
+            : `Java_${classPart}_${methodPart}__${argumentDescriptor(method.dex_descriptor)}`,
         jna_expected_name: method.method_name,
         overload_group_size: groupSizes.get(method.method_name) ?? 1,
       };
@@ -102,6 +114,11 @@ export const projectJniNames = (
       "Expected names cover statically exported JNI symbols only; RegisterNatives dynamic registration is unknown.",
       "A name match against a native library does not establish that the library is loaded or the method is called.",
       "When overload_group_size exceeds 1, the short name is ambiguous and only the long name identifies one overload.",
+      ...(parsed.methods.some((method) => method.dex_descriptor === null)
+        ? [
+            "Methods without a dex_descriptor report only the short name; overloads need the long name from an external descriptor (REA class inventory no longer reports DEX prototypes).",
+          ]
+        : []),
     ],
   });
 };

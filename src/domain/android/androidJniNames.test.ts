@@ -90,4 +90,27 @@ describe("projectJniNames", () => {
     });
     expect(result.unknowns.join(" ")).toContain("RegisterNatives");
   });
+
+  it("reports only the short name when no descriptor is supplied", () => {
+    const result = projectJniNames({
+      class_name: "pkg.Cls",
+      methods: [{ method_name: "m", dex_descriptor: null }],
+    });
+    expect(result.methods[0]).toMatchObject({
+      jni_short_name: "Java_pkg_Cls_m",
+      jni_long_name: null,
+    });
+    expect(result.unknowns.join(" ")).toContain(
+      "no longer reports DEX prototypes",
+    );
+  });
+
+  it("rejects malformed descriptors instead of guessing", () => {
+    expect(() =>
+      projectJniNames({
+        class_name: "pkg.Cls",
+        methods: [{ method_name: "m", dex_descriptor: "nope" }],
+      }),
+    ).toThrow();
+  });
 });

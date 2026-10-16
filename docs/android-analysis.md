@@ -132,7 +132,9 @@ rea project-android-jni-names '{"class_name": "example.MainActivity", "methods":
 Equivalent MCP method is `project_android_jni_names`. It reports JNI short/long
 names and the JNA exact name per method from caller-selected declarations, so
 an expected `Java_pkg_Class_method` name can be searched in an extracted `.so`
-with the native providers. Nested classes need the binary `$` form. A name
+with the native providers. The descriptor is optional: without it only the
+short name is reported, because REA class inventory no longer reports DEX
+prototypes. Nested classes need the binary `$` form. A name
 match is a static binding hypothesis, not proof of loading or invocation;
 `RegisterNatives` registration stays unknown.
 

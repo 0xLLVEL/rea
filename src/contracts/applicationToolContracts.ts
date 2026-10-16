@@ -329,7 +329,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "project_android_jni_names",
     ...toolContractMetadata("project_android_jni_names"),
     description:
-      "Project expected JNI short/long symbol names and the JNA exact name for caller-selected DEX methods without reading an APK or native library. Reports per-method mangled names, overload group sizes, and explicit unknowns for RegisterNatives registration and runtime loading; a name match never establishes invocation.",
+      "Project expected JNI short/long symbol names and the JNA exact name for caller-selected DEX methods without reading an APK or native library. The dex_descriptor is optional: omitted methods report only the short name, since REA class inventory no longer reports DEX prototypes. Reports per-method mangled names, overload group sizes, and explicit unknowns for RegisterNatives registration and runtime loading; a name match never establishes invocation.",
     kind: "application",
     inputSchema: androidJniNamesInputSchema,
     outputSchema: evidenceResultOf(androidJniNamesResultSchema),
