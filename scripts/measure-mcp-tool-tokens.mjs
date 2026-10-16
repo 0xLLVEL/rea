@@ -75,6 +75,11 @@ const summarize = (tools) => {
     name: tool.name,
     family: toolFamilyId(tool.name) ?? "(ungrouped)",
     bytes: payloadBytes(tool),
+    descBytes: Buffer.byteLength(tool.description ?? "", "utf8"),
+    schemaBytes: Buffer.byteLength(
+      JSON.stringify(tool.inputSchema ?? null),
+      "utf8",
+    ),
     outputBytes: outputBytes(tool),
   }));
   const bytes = rows.reduce((sum, row) => sum + row.bytes, 0);
@@ -187,8 +192,17 @@ for (const id of TOOL_FAMILY_IDS) {
 rows.push("");
 rows.push("## Fattest advertised tools (compact profile, input side)");
 rows.push("");
-rows.push(line(["Tool", "Family", "Bytes", "~Tokens (calibrated)"]));
-rows.push(line(["---", "---", "--:", "--:"]));
+rows.push(
+  line([
+    "Tool",
+    "Family",
+    "Bytes",
+    "o/w description",
+    "o/w schema",
+    "~Tokens (calibrated)",
+  ]),
+);
+rows.push(line(["---", "---", "--:", "--:", "--:", "--:"]));
 const compactTools = await listAdvertised({
   families: undefined,
   compact: true,
@@ -203,6 +217,8 @@ summarize(compactTools)
         row.name,
         row.family,
         String(row.bytes),
+        String(row.descBytes),
+        String(row.schemaBytes),
         String(estimate(row.bytes)),
       ]),
     ),
