@@ -78,7 +78,8 @@ const summarize = (tools) => {
     outputBytes: outputBytes(tool),
   }));
   const bytes = rows.reduce((sum, row) => sum + row.bytes, 0);
-  return { rows, bytes, count: rows.length };
+  const outputBytesTotal = rows.reduce((sum, row) => sum + row.outputBytes, 0);
+  return { rows, bytes, outputBytesTotal, count: rows.length };
 };
 
 const full = summarize(await listAdvertised({}));
@@ -94,52 +95,60 @@ rows.push(
   `Measured through EvidenceMcpServer tools/list on ${full.count} registered tools ` +
     `(reference #3098 counted ${REFERENCE_FULL_COUNT}). Byte totals are exact; ` +
     "token columns are estimates calibrated at " +
-    `${bytesPerReferenceToken.toFixed(2)} bytes/token against the published full-catalog total.`,
+    `${bytesPerReferenceToken.toFixed(2)} bytes/token against the published full-catalog total. ` +
+    `Output schemas are dense JSON with fewer chars per token than mixed prose, ` +
+    `so calibrated totals that include output bytes are lower bounds.`,
 );
 rows.push("");
 rows.push(
   line([
     "Scope",
     "Profile",
+    "Output schemas",
     "Tools",
-    "Bytes",
+    "Bytes in+out",
     "~Tokens (calibrated)",
     "~Tokens (chars/4)",
   ]),
 );
-rows.push(line(["---", "---", "--:", "--:", "--:", "--:"]));
+rows.push(line(["---", "---", "---", "--:", "--:", "--:", "--:"]));
 
 const scenarios = [
-  ["full", undefined, false, "full"],
-  ["full", undefined, true, "compact"],
-  ["session", ["session"], false, "full"],
-  ["session", ["session"], true, "compact"],
-  ["session,direct", ["session", "direct"], true, "compact"],
+  ["full", undefined, false, false],
+  ["full", undefined, true, false],
+  ["full", undefined, true, true],
+  ["session", ["session"], false, false],
+  ["session", ["session"], true, false],
+  ["session", ["session"], true, true],
+  ["session,direct", ["session", "direct"], true, false],
+  ["session,direct", ["session", "direct"], true, true],
 ];
 const byKey = new Map();
-for (const [label, families, compact] of scenarios) {
-  const key = `${label}/${compact ? "compact" : "full"}`;
+for (const [label, families, compact, omitOutput] of scenarios) {
+  const key = `${label}/${compact ? "compact" : "full"}/${omitOutput ? "omit" : "keep"}`;
   if (byKey.has(key)) continue;
   const summary = summarize(
-    await listAdvertised({ families, compact, omitOutputSchemas: false }),
+    await listAdvertised({ families, compact, omitOutputSchemas: omitOutput }),
   );
   byKey.set(key, summary);
+  const total = summary.bytes + summary.outputBytesTotal;
   rows.push(
     line([
       label,
       compact ? "compact" : "full",
+      omitOutput ? "omitted" : "sent",
       String(summary.count),
-      String(summary.bytes),
-      String(estimate(summary.bytes)),
-      String(heuristic(summary.bytes)),
+      String(total),
+      String(estimate(total)),
+      String(heuristic(total)),
     ]),
   );
 }
 rows.push("");
 rows.push("## Sanity check against #3098");
 rows.push("");
-const compactTotal = byKey.get("full/compact").bytes;
-const sessionCompact = byKey.get("session/compact").bytes;
+const compactTotal = byKey.get("full/compact/keep").bytes;
+const sessionCompact = byKey.get("session/compact/keep").bytes;
 rows.push(
   `- Full compact: estimated ${estimate(compactTotal)} vs published ${REFERENCE_COMPACT_TOKENS} ` +
     `(delta ${estimate(compactTotal) - REFERENCE_COMPACT_TOKENS}).`,
