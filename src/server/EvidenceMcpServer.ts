@@ -209,6 +209,16 @@ export class EvidenceMcpServer extends McpServer {
     return family !== undefined && this.advertisedToolFamilies.has(family);
   }
 
+  /**
+   * Whether a tool family is advertised under this registration's scope.
+   * Availability probing consults this before launching provider probes
+   * whose tools cannot appear in the response.
+   */
+  advertisesFamily(family: string): boolean {
+    if (this.advertisedToolFamilies === undefined) return true;
+    return this.advertisedToolFamilies.has(family);
+  }
+
   /** Preserve the SDK transport lifecycle while retaining oversized errors. */
   override connect(transport: Transport): Promise<void> {
     return super.connect(

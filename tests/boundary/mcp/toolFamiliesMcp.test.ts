@@ -2,8 +2,13 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 import { describe, expect, it } from "vitest";
 
-import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
+import {
+  TOOL_CONTRACTS,
+  toolContract,
+} from "../../../src/contracts/toolContracts.js";
 import { TOOL_FAMILY_DEFINITIONS } from "../../../src/contracts/toolFamilies.js";
+import { registerSessionStatusTool } from "../../../src/server/registerSessionStatusTool.js";
+import type { BinarySessionPort } from "../../../src/application/binary/BinarySessionPort.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { ToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
@@ -101,4 +106,39 @@ describe("MCP tool family advertising", () => {
     for (const { name } of TOOL_CONTRACTS)
       expect(server.advertisesTool(name)).toBe(true);
   });
+
+  it.each([
+    { scope: ["session"], probed: [] },
+    { scope: ["session", "android", "adb"], probed: ["android", "adb"] },
+  ])(
+    "probes only advertised families for binary_session status ($scope)",
+    async ({ scope, probed }) => {
+      const server = scopedServer(new Set(scope));
+      const calls: string[] = [];
+      const probe = (name: string) => async () => {
+        calls.push(name);
+        return {
+          status: "unavailable",
+          code: "runtime_missing",
+          reason: `${name} runtime is unavailable`,
+          diagnostics: {},
+        } as const;
+      };
+      registerSessionStatusTool({
+        server,
+        session: { status: () => ({}) } as unknown as BinarySessionPort,
+        contract: toolContract("binary_session"),
+        startedAt: new Date().toISOString(),
+        availabilityPolicy: () => ({ processCaptureEnabled: false }),
+        androidAnalysisAvailability: probe("android"),
+        adbAnalysisAvailability: probe("adb"),
+        apktoolAnalysisAvailability: probe("apktool"),
+        jebAnalysisAvailability: probe("jeb"),
+      });
+      await withClient(server, async (client) => {
+        await client.callTool({ name: "binary_session", arguments: {} });
+      });
+      expect(calls.sort()).toEqual([...probed].sort());
+    },
+  );
 });
