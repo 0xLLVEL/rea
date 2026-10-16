@@ -21,7 +21,10 @@ import {
 } from "@modelcontextprotocol/server";
 
 import { analysisErrorProjectionSchema } from "../contracts/errorSchemas.js";
-import { toolFamilyId } from "../contracts/toolFamilies.js";
+import {
+  toolFamilyId,
+  contractsForToolFamilies,
+} from "../contracts/toolFamilies.js";
 import {
   presentAdvertisedInputSchema,
   type CompactInputSchemaPresentation,
@@ -135,10 +138,13 @@ export class EvidenceMcpServer extends McpServer {
         ? undefined
         : { budgetBytes: compactPresentation.budgetBytes };
     this.catalogIdentity =
-      this.compactPresentation === undefined && !this.omitOutputSchemas
+      this.compactPresentation === undefined &&
+      !this.omitOutputSchemas &&
+      this.advertisedToolFamilies === undefined
         ? CATALOG_IDENTITY
         : createCatalogIdentity(
             this.compactPresentation,
+            contractsForToolFamilies(this.advertisedToolFamilies),
             this.omitOutputSchemas ? "off" : "full",
           );
   }

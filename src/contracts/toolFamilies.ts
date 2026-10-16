@@ -160,6 +160,20 @@ for (const { id, contracts } of TOOL_FAMILY_DEFINITIONS)
 export const toolFamilyId = (name: string): ToolFamilyId | undefined =>
   familyByTool.get(name);
 
+/**
+ * Contracts in the selected families, in canonical catalog order.
+ * An absent selection means the complete catalog, matching unscoped servers.
+ */
+export const contractsForToolFamilies = (
+  selection: ReadonlySet<string> | undefined,
+): readonly (typeof TOOL_CONTRACTS)[number][] =>
+  selection === undefined
+    ? TOOL_CONTRACTS
+    : TOOL_CONTRACTS.filter(({ name }) => {
+        const family = toolFamilyId(name);
+        return family !== undefined && selection.has(family);
+      });
+
 /** Whether a parsed selection value names a published tool family. */
 export const isToolFamilyId = (value: string): value is ToolFamilyId =>
   (TOOL_FAMILY_IDS as readonly string[]).includes(value);

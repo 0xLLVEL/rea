@@ -805,9 +805,14 @@ list; the setting is read at startup, so restart the server to apply changes.
 Out-of-scope tools stay registered but disabled: `tools/list` omits their
 names and schemas entirely, and a direct call fails with the SDK's
 `Tool ... disabled` invalid-params error rather than disappearing silently.
-Canonical server-side validation and Evidence semantics are unchanged for
+The server identity digest and `rea mcp doctor` inventory derive from the
+same selected scope, so a scoped server reports itself healthy; a scope
+without the `session` family cannot serve `binary_session`, and doctor says
+so explicitly instead of reporting a mismatch. Canonical server-side
+validation and Evidence semantics are unchanged for
 the tools that remain advertised. The default (unset) advertises the complete
-catalog exactly as before.
+catalog exactly as before. Saved registrations with an invalid selection
+report `invalid` in status instead of starting a server that fails.
 
 `rea setup --client <id> --tool-families <ids>` writes the same selection
 into the `env` object of that client's `rea` entry, so the scope travels with
