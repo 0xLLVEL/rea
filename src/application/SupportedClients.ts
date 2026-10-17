@@ -785,6 +785,26 @@ export const clientOwnershipEvidencePaths = (
       )
     : [];
 
+/**
+ * Registration storage this client shares with another product: its own shared
+ * configuration plus any same-scope fallback another client also loads. Only
+ * this storage may be retained when product applicability is unproven, because
+ * failing closed on it would block REA removals for files REA does not own.
+ * Product-local configuration is REA's own boundary and stays fail-closed.
+ */
+export const clientSharedRegistrationPaths = (
+  client: Pick<
+    SetupClient,
+    "configPath" | "configPaths" | "sharedRegistration" | "zcodeFallbackPath"
+  >,
+): ReadonlySet<string> =>
+  new Set([
+    ...clientOwnershipEvidencePaths(client),
+    ...(client.zcodeFallbackPath === undefined
+      ? []
+      : [client.zcodeFallbackPath]),
+  ]);
+
 const resolvePath = (
   path: ClientPath,
   context: ClientPathContext,

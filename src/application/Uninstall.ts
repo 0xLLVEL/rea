@@ -39,6 +39,7 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   appDataRedirection,
   clientOwnershipEvidencePaths,
+  clientSharedRegistrationPaths,
   manualRegistrationRemediation,
   registrationWriteBlocker,
   supportedClients,
@@ -287,11 +288,22 @@ export const systemUninstallHost = (
             // Keep the client unverified until one discovery path exists.
           }
         }
-        const applicability = applicable
-          ? {}
-          : { applicability: "unverified" as const };
+        // Unproven applicability may only soften failures for storage REA does
+        // not own. A denied product-local path means an unknown registration
+        // state, which must stop uninstall instead of reporting success.
+        const sharedPaths = clientSharedRegistrationPaths(client);
+        const applicabilityFor = (
+          configPath: string,
+        ): Pick<UninstallClient, "applicability"> =>
+          applicable || !sharedPaths.has(configPath)
+            ? {}
+            : { applicability: "unverified" };
         for (const configPath of uninstallConfigPaths(client))
-          clients.push({ ...client, configPath, ...applicability });
+          clients.push({
+            ...client,
+            configPath,
+            ...applicabilityFor(configPath),
+          });
         // ZCode's fallback is another product's primary storage, so ZCode may
         // only act on it once its own profile directory proves it is installed.
         if (applicable && client.zcodeFallbackPath !== undefined)
@@ -299,7 +311,6 @@ export const systemUninstallHost = (
             ...client,
             configPath: client.zcodeFallbackPath,
             format: "zcode_fallback" as const,
-            ...applicability,
           });
         // Shared storage is inspected once and the decision is reported once.
         // See ClientRegistrationStatus.sharedRegistration for the ownership model.

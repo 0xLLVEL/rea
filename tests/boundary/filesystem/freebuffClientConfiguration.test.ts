@@ -1,4 +1,12 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import {
+  copyFile,
+  lstat,
+  mkdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,6 +24,7 @@ import {
 import {
   runUninstall,
   systemUninstallHost,
+  type UninstallFileSystem,
 } from "../../../src/application/Uninstall.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
@@ -235,6 +244,50 @@ describe("uninstall applicability for shared FreeBuff storage", () => {
     });
     expect(await readFile(client.configPath, "utf8")).toBe(
       "{unrelated malformed shared data",
+    );
+  });
+
+  it("fails closed when a denied product profile leaves a client config unreadable", async () => {
+    // ZCode reads product-local storage, so an unreadable profile directory
+    // leaves an unknown registration state rather than an absent one.
+    const home = await createTestTempDirectory("rea-zcode-denied-");
+    const zcode = supportedClients(home, process.platform, {}).find(
+      ({ name }) => name === "zcode",
+    )!;
+    await mkdir(dirname(zcode.configPath), { recursive: true });
+    await writeFile(zcode.configPath, JSON.stringify({ mcpServers: {} }));
+    await configureClientConfiguration(zcode, {}, command);
+    const shared = join(home, ".agents", "mcp.json");
+    await mkdir(dirname(shared), { recursive: true });
+    await writeFile(shared, "{malformed shared data");
+    const discovery = zcode.discoveryPaths![0];
+    const denied = () => Object.assign(new Error("denied"), { code: "EACCES" });
+    const fileSystem: UninstallFileSystem = {
+      readText: (path) =>
+        path === zcode.configPath
+          ? Promise.reject(denied())
+          : readFile(path, "utf8"),
+      copy: (source, destination) =>
+        copyFile(source, destination, fsConstants.COPYFILE_EXCL),
+      writeText: (path, contents) => writeFile(path, contents),
+      stat: (path) =>
+        path === discovery ? Promise.reject(denied()) : lstat(path),
+      remove: (path) => rm(path, { recursive: true }),
+    };
+
+    const result = await runUninstall(
+      false,
+      systemUninstallHost(home, fileSystem),
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.items).toContainEqual(
+      expect.objectContaining({
+        name: "zcode",
+        status: "failed",
+        detail:
+          "Configuration could not be read. Check file permissions, then rerun uninstall.",
+      }),
     );
   });
 
