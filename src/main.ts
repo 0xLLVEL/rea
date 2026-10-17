@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
+import { CURRENT_ENTRYPOINT_PATH } from "./process/CurrentEntrypointPath.js";
 import { pathToFileURL } from "node:url";
 import { realpathSync } from "node:fs";
 
@@ -20,6 +21,7 @@ import {
 } from "./composition/optionalObservationProviders.js";
 import { createToolResultDelivery } from "./server/toolResult.js";
 import { createShutdown } from "./main/shutdown.js";
+import { registerProcessShutdown } from "./main/processShutdown.js";
 
 const runtimeDependencies = (): RuntimeDependencies => ({
   env: process.env,
@@ -28,18 +30,7 @@ const runtimeDependencies = (): RuntimeDependencies => ({
   setExitCode: (code) => {
     process.exitCode = code;
   },
-  registerShutdown: (handler) => {
-    process.once("SIGINT", handler);
-    process.once("SIGTERM", handler);
-    process.stdin.once("end", handler);
-    process.stdin.once("close", handler);
-    return () => {
-      process.off("SIGINT", handler);
-      process.off("SIGTERM", handler);
-      process.stdin.off("end", handler);
-      process.stdin.off("close", handler);
-    };
-  },
+  registerShutdown: registerProcessShutdown,
 });
 
 /**
@@ -122,7 +113,6 @@ const isDirectEntrypoint = (
   }
 };
 
-const entryPath = process.argv[1];
-if (isDirectEntrypoint(entryPath, import.meta.url)) {
+if (isDirectEntrypoint(CURRENT_ENTRYPOINT_PATH, import.meta.url)) {
   void runEntrypoint();
 }
