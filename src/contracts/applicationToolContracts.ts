@@ -17,6 +17,14 @@ import {
   reconstructionObligationLedgerSchema,
 } from "../domain/reconstructionObligationLedgerSchemas.js";
 import {
+  androidJniNamesInputSchema,
+  androidJniNamesResultSchema,
+} from "../domain/android/androidJniNames.js";
+import {
+  androidAttackSurfaceInputSchema,
+  androidAttackSurfaceResultSchema,
+} from "../domain/android/androidAttackSurface.js";
+import {
   androidApplicationProjectionInputSchema,
   androidApplicationProjectionResultSchema,
 } from "../domain/android/androidApplication.js";
@@ -317,6 +325,51 @@ export const APPLICATION_TOOL_CONTRACTS = [
       },
     ],
   },
+  {
+    name: "project_android_jni_names",
+    ...toolContractMetadata("project_android_jni_names"),
+    description:
+      "Project expected JNI short/long symbol names and the JNA exact name for caller-selected DEX methods without reading an APK or native library. The dex_descriptor is optional: omitted methods report only the short name, since REA class inventory no longer reports DEX prototypes. Reports per-method mangled names, overload group sizes, and explicit unknowns for RegisterNatives registration and runtime loading; a name match never establishes invocation.",
+    kind: "application",
+    inputSchema: androidJniNamesInputSchema,
+    outputSchema: evidenceResultOf(androidJniNamesResultSchema),
+    examples: [
+      {
+        title: "Project expected JNI names for native methods",
+        input: {
+          class_name: "de.markusfisch.android.zxingcpp.ZxingCpp",
+          methods: [
+            {
+              method_name: "readYBuffer",
+              dex_descriptor:
+                "(Ljava/nio/ByteBuffer;IIIIIILde/markusfisch/android/zxingcpp/ZxingCpp$ReaderOptions;)Ljava/util/List;",
+            },
+          ],
+        },
+      },
+    ],
+  },
+  {
+    name: "project_android_attack_surface",
+    ...toolContractMetadata("project_android_attack_surface"),
+    description:
+      "Project structural attack-surface facts from caller-selected Android package declarations (permissions plus inspect_android_package components). Separates exported components without a guarding permission from guarded and export-unknown ones, indexes intent actions, and reports foreground-service types and provider authorities without claiming protection levels, reachability, or exploitability.",
+    kind: "application",
+    inputSchema: androidAttackSurfaceInputSchema,
+    outputSchema: evidenceResultOf(androidAttackSurfaceResultSchema),
+    examples: [
+      {
+        title: "Rank exported components from package declarations",
+        input: {
+          package_name: "io.example",
+          target_sdk: "30",
+          permissions: ["android.permission.INTERNET"],
+          components: [],
+          component_coverage: "complete",
+        },
+      },
+    ],
+  },
 ] as const satisfies readonly ToolContract[];
 
 /** Resolve one named application contract without relying on array position. */
@@ -350,6 +403,12 @@ export function applicationToolContract(
 export function applicationToolContract(
   name: "project_harmony_application_graph",
 ): (typeof APPLICATION_TOOL_CONTRACTS)[9];
+export function applicationToolContract(
+  name: "project_android_jni_names",
+): (typeof APPLICATION_TOOL_CONTRACTS)[10];
+export function applicationToolContract(
+  name: "project_android_attack_surface",
+): (typeof APPLICATION_TOOL_CONTRACTS)[11];
 export function applicationToolContract(
   name: (typeof APPLICATION_TOOL_CONTRACTS)[number]["name"],
 ): (typeof APPLICATION_TOOL_CONTRACTS)[number] {

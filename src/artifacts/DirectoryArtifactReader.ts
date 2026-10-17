@@ -14,16 +14,23 @@ import {
   sameArtifactSourceIdentity,
   type ArtifactEntry,
   type ArtifactReader,
+  type ArtifactTraversalOmission,
+  type ArtifactTraversalOptions,
 } from "./ArtifactReader.js";
 import { hostExecutableMarking } from "./hostExecutableMarking.js";
 import { OwnedDirectoryHandle } from "../filesystem/OwnedDirectoryHandle.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
-import { readFileHandleChunks } from "../filesystem/readFileHandleChunks.js";
+import { readArtifactFileChunks } from "./readArtifactFileChunks.js";
+
+interface DirectoryTraversalOptions extends ArtifactTraversalOptions {
+  readonly descendInto?: (path: string) => boolean;
+}
 
 /** Non-symlink-following directory reader. */
 export class DirectoryArtifactReader implements ArtifactReader {
   readonly format = "directory" as const;
   #rootPromise: Promise<string> | undefined;
+  #rootIdentity: { readonly dev: bigint; readonly ino: bigint } | undefined;
   readonly #rootPath: string;
   readonly #directories = new Set<OwnedDirectoryHandle>();
   readonly #files = new Map<OwnedFileHandle, string>();
@@ -35,47 +42,54 @@ export class DirectoryArtifactReader implements ArtifactReader {
   /** Enumerate entries, optionally restricting descent while retaining directories. */
   async *entries(
     signal?: AbortSignal,
-    descendInto?: (path: string) => boolean,
+    selection?: DirectoryTraversalOptions | ((path: string) => boolean),
   ): AsyncIterable<ArtifactEntry> {
     const root = await this.#resolveRoot();
+    const options =
+      typeof selection === "function" ? { descendInto: selection } : selection;
     const pending = [root];
     while (pending.length > 0) {
       abortIfNeeded(signal);
       const directory = pending.pop();
       if (directory === undefined) break;
       await withDirectoryIoContext("inspect directory", directory, () =>
-        assertContainedDirectory(root, directory),
+        assertContainedDirectory(root, directory, this.#rootIdentity),
       );
       for await (const entry of this.#readDirectory(
         directory,
         pending,
         signal,
-        descendInto,
+        options,
       ))
         yield entry;
       await withDirectoryIoContext("inspect directory", directory, () =>
-        assertContainedDirectory(root, directory),
+        assertContainedDirectory(root, directory, this.#rootIdentity),
       );
     }
   }
 
   async #resolveRoot(): Promise<string> {
-    return (this.#rootPromise ??= realpath(this.#rootPath)).catch(
-      (cause: unknown) => {
-        throw directoryIoFailure(
-          "resolve artifact root",
-          this.#rootPath,
-          cause,
+    return (this.#rootPromise ??= (async () => {
+      const root = await realpath(this.#rootPath);
+      const metadata = await lstat(root, { bigint: true });
+      if (metadata.isSymbolicLink() || !metadata.isDirectory())
+        throw new ArtifactReaderFailure(
+          "path",
+          "Artifact root changed during traversal",
         );
-      },
-    );
+      this.#rootIdentity = { dev: metadata.dev, ino: metadata.ino };
+      return root;
+    })().catch((cause: unknown) => {
+      if (cause instanceof ArtifactReaderFailure) throw cause;
+      throw directoryIoFailure("resolve artifact root", this.#rootPath, cause);
+    }));
   }
 
   async *#readDirectory(
     directory: string,
     pending: string[],
     signal?: AbortSignal,
-    descendInto?: (path: string) => boolean,
+    options?: DirectoryTraversalOptions,
   ): AsyncIterable<ArtifactEntry> {
     const root = await this.#resolveRoot();
     const handle = new OwnedDirectoryHandle(
@@ -92,6 +106,9 @@ export class DirectoryArtifactReader implements ArtifactReader {
     };
     try {
       for (;;) {
+        await withDirectoryIoContext("inspect directory", directory, () =>
+          assertContainedDirectory(root, directory, this.#rootIdentity),
+        );
         const child = await handle.handle.read();
         if (child === null) break;
         abortIfNeeded(signal);
@@ -103,10 +120,16 @@ export class DirectoryArtifactReader implements ArtifactReader {
         );
         const path = relative(root, absolute).split(sep).join("/");
         const entry = artifactEntry(path, absolute, metadata);
-        if (entry === undefined) continue;
+        if (entry === undefined) {
+          options?.onOmission?.({ path, kind: unsupportedEntryKind(metadata) });
+          continue;
+        }
         yield entry;
-        if (entry.kind === "directory" && (descendInto?.(path) ?? true))
-          childDirectories.push(absolute);
+        if (entry.kind === "directory") {
+          if (options?.descendInto?.(path) ?? true)
+            childDirectories.push(absolute);
+          else options?.onOmission?.({ path, kind: "directory-descendants" });
+        }
       }
     } catch (cause: unknown) {
       traversal = {
@@ -256,6 +279,19 @@ export class DirectoryArtifactReader implements ArtifactReader {
   }
 }
 
+const unsupportedEntryKind = (
+  metadata: BigIntStats,
+): ArtifactTraversalOmission["kind"] =>
+  metadata.isFIFO()
+    ? "fifo"
+    : metadata.isSocket()
+      ? "socket"
+      : metadata.isBlockDevice()
+        ? "block-device"
+        : metadata.isCharacterDevice()
+          ? "character-device"
+          : "unsupported";
+
 const artifactEntry = (
   path: string,
   absolute: string,
@@ -341,7 +377,7 @@ const mapStableFileRead = async function* (
         "integrity",
         `Directory entry has no captured file state: ${entry.path}`,
       );
-    for await (const chunk of readFileHandleChunks(handle, {
+    for await (const chunk of readArtifactFileChunks(handle, {
       // Include one extra byte so a growing file cannot make this read unbounded.
       end: expectedBytes,
       signal,
@@ -368,12 +404,6 @@ const mapStableFileRead = async function* (
         `Directory entry changed during read: ${entry.path}`,
       );
   } catch (cause: unknown) {
-    if (signal?.aborted === true)
-      throw new ArtifactReaderFailure(
-        "cancelled",
-        "Directory artifact read cancelled",
-        { cause },
-      );
     if (
       cause instanceof Error &&
       "code" in cause &&
@@ -407,17 +437,23 @@ const abortIfNeeded = (signal?: AbortSignal): void => {
     throw new ArtifactReaderFailure(
       "cancelled",
       "Artifact traversal cancelled",
+      { cause: signal.reason },
     );
 };
 
 const assertContainedDirectory = async (
   root: string,
   directory: string,
+  rootIdentity: { readonly dev: bigint; readonly ino: bigint } | undefined,
 ): Promise<void> => {
   const canonical = await realpath(directory);
   const fromRoot = relative(root, canonical);
   const metadata = await lstat(directory);
+  const currentRoot = await lstat(root, { bigint: true });
   if (
+    rootIdentity === undefined ||
+    currentRoot.dev !== rootIdentity.dev ||
+    currentRoot.ino !== rootIdentity.ino ||
     metadata.isSymbolicLink() ||
     !metadata.isDirectory() ||
     fromRoot === ".." ||

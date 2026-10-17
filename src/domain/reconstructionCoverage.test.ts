@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   completeReconstructionCoverageData,
+  completeReconstructionCoverageFixture,
   RECONSTRUCTION_COVERAGE_NOW,
   reconstructionCoverageEvidenceId,
 } from "./reconstructionCoverage.fixture.js";
@@ -12,6 +13,29 @@ import {
 } from "./reconstructionCoverage.js";
 
 const digest = (character: string): string => character.repeat(64);
+
+it("preserves duplicate coverage owners instead of overwriting them in shared indexes", () => {
+  const workspace = completeReconstructionCoverageData();
+  const owner = workspace.owners[0];
+  if (owner === undefined) throw new Error("Expected fixture owner");
+  const result = evaluateReconstructionClosure(
+    {
+      ...workspace,
+      owners: [owner, owner],
+    },
+    "replacement.cli",
+    RECONSTRUCTION_COVERAGE_NOW,
+  );
+  expect(result).toMatchObject({
+    status: "partial",
+    reasons: expect.arrayContaining([
+      expect.objectContaining({
+        code: "owner-duplicate",
+        subject_id: "cli.help",
+      }),
+    ]),
+  });
+});
 
 describe("reconstruction coverage closure", () => {
   it("returns ready only when ownership, verification, package, and authority closure pass", () => {
@@ -288,11 +312,8 @@ describe("reconstruction coverage verifier selection", () => {
 
 describe("reconstruction coverage conflicting latest verifier observations", () => {
   it("keeps conflicting tied assessments unknown regardless of input order", () => {
-    const workspace = completeReconstructionCoverageData();
-    const result = workspace.verifier_results[0];
-    const boundary = workspace.boundaries[0];
-    if (result === undefined || boundary === undefined)
-      throw new Error("Expected complete reconstruction coverage fixture");
+    const { workspace, result, boundary } =
+      completeReconstructionCoverageFixture();
     const failed = {
       ...result,
       status: "fail" as const,
@@ -338,11 +359,8 @@ describe("reconstruction coverage conflicting latest verifier observations", () 
 
 describe("reconstruction coverage equivalent latest verifier observations", () => {
   it("coalesces equivalent equal-instant observations and retains all evidence", () => {
-    const workspace = completeReconstructionCoverageData();
-    const result = workspace.verifier_results[0];
-    const boundary = workspace.boundaries[0];
-    if (result === undefined || boundary === undefined)
-      throw new Error("Expected complete reconstruction coverage fixture");
+    const { workspace, result, boundary } =
+      completeReconstructionCoverageFixture();
     const first = {
       ...result,
       observed_at: "2026-07-16T11:00:00.123456789012345678900Z",
@@ -388,11 +406,8 @@ describe("reconstruction coverage equivalent latest verifier observations", () =
 
 describe("reconstruction coverage verifier timestamp selection", () => {
   it("lets a later unambiguous observation supersede an older tie", () => {
-    const workspace = completeReconstructionCoverageData();
-    const result = workspace.verifier_results[0];
-    const boundary = workspace.boundaries[0];
-    if (result === undefined || boundary === undefined)
-      throw new Error("Expected complete reconstruction coverage fixture");
+    const { workspace, result, boundary } =
+      completeReconstructionCoverageFixture();
     const failed = { ...result, status: "fail" as const };
     const latestPass = {
       ...result,
@@ -412,50 +427,14 @@ describe("reconstruction coverage verifier timestamp selection", () => {
     ).toMatchObject({ status: "ready", reasons: [] });
   });
 
-  it("orders offset-bearing verifier timestamps chronologically", () => {
-    const workspace = completeReconstructionCoverageData();
-    const result = workspace.verifier_results[0];
-    if (result === undefined)
-      throw new Error("Expected fixture verifier result");
-    const semantic = workspace;
-    const changed = createReconstructionCoverageData({
-      ...semantic,
-      verifier_results: [
-        { ...result, observed_at: "2026-07-16T08:00:00.000Z" },
-        {
-          ...result,
-          observed_at: "2026-07-16T04:00:00.000-05:00",
-          status: "fail",
-        },
-      ],
-    });
-
-    expect(
-      evaluateReconstructionClosure(
-        changed,
-        "replacement.cli",
-        RECONSTRUCTION_COVERAGE_NOW,
-      ),
-    ).toMatchObject({
-      status: "failed",
-      reasons: [expect.objectContaining({ code: "verifier-failed" })],
-    });
-  });
-
-  it("selects the later result when timestamps differ below millisecond precision", () => {
-    const workspace = completeReconstructionCoverageData();
-    const result = workspace.verifier_results[0];
-    if (result === undefined)
-      throw new Error("Expected fixture verifier result");
+  /** Evaluate a workspace whose newest verifier observation fails the closure. */
+  const expectNewestObservationFails = (passedAt: string, failedAt: string) => {
+    const { workspace, result } = completeReconstructionCoverageFixture();
     const changed = createReconstructionCoverageData({
       ...workspace,
       verifier_results: [
-        { ...result, observed_at: "2026-07-16T11:00:00.1231Z" },
-        {
-          ...result,
-          observed_at: "2026-07-16T11:00:00.1239Z",
-          status: "fail",
-        },
+        { ...result, observed_at: passedAt },
+        { ...result, observed_at: failedAt, status: "fail" },
       ],
     });
 
@@ -469,15 +448,26 @@ describe("reconstruction coverage verifier timestamp selection", () => {
       status: "failed",
       reasons: [expect.objectContaining({ code: "verifier-failed" })],
     });
+  };
+
+  it("orders offset-bearing verifier timestamps chronologically", () => {
+    expectNewestObservationFails(
+      "2026-07-16T08:00:00.000Z",
+      "2026-07-16T04:00:00.000-05:00",
+    );
+  });
+
+  it("selects the later result when timestamps differ below millisecond precision", () => {
+    expectNewestObservationFails(
+      "2026-07-16T11:00:00.1231Z",
+      "2026-07-16T11:00:00.1239Z",
+    );
   });
 });
 
 describe("reconstruction coverage verifier future timestamps", () => {
   it("treats an observation beyond millisecond-precision now as future", () => {
-    const workspace = completeReconstructionCoverageData();
-    const result = workspace.verifier_results[0];
-    if (result === undefined)
-      throw new Error("Expected fixture verifier result");
+    const { workspace, result } = completeReconstructionCoverageFixture();
     const changed = createReconstructionCoverageData({
       ...workspace,
       verifier_results: [
@@ -505,10 +495,7 @@ describe("reconstruction coverage verifier future timestamps", () => {
   });
 
   it("rejects verifier observations from the future", () => {
-    const workspace = completeReconstructionCoverageData();
-    const result = workspace.verifier_results[0];
-    if (result === undefined)
-      throw new Error("Expected fixture verifier result");
+    const { workspace, result } = completeReconstructionCoverageFixture();
     const semantic = workspace;
     const changed = createReconstructionCoverageData({
       ...semantic,

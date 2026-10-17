@@ -1,23 +1,28 @@
 import * as t from "@babel/types";
 
-import { semanticBuiltinNamespacePath } from "./javascriptSemanticProvenance.js";
-
 import type {
   JavaScriptSemanticCallable,
   JavaScriptSemanticChildProcessInteraction,
   JavaScriptSemanticChildProcessSpawn,
 } from "./javascriptSemanticIr.js";
-import { semanticCallableIdForNode } from "./javascriptSemanticProjection.js";
-import { semanticStaticPropertyName } from "./javascriptAstValues.js";
+import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
 import {
+  semanticStaticPropertyName,
+  unwrapJavaScriptExpression,
+} from "./javascriptAstValues.js";
+import {
+  isUnshadowedGlobal,
   resolveSemanticBindingState,
+  semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
+import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import {
+  builtinDataEffectMethod,
   dataEffectLiteralString,
   dataEffectMemberCallee,
   assignedSemanticResultBindings,
@@ -81,13 +86,11 @@ const collectSpawns = (
   const admittedCallables = new Set(
     callables.map(({ callableId }) => callableId),
   );
-  const callableStack: string[] = [];
+  const callableStack = createSemanticCallableIdStack(admittedCallables);
   const ancestors: t.Node[] = [];
   traverseJavaScriptAst(program, {
-    enter: (node) => {
-      const callableId = semanticCallableIdForNode(node);
-      if (callableId !== null && admittedCallables.has(callableId))
-        callableStack.push(callableId);
+    enter: (node, parent) => {
+      callableStack.enter(node, parent);
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
         const method = childProcessMethod(node.callee, state);
         if (method !== null) {
@@ -99,7 +102,7 @@ const collectSpawns = (
           output.push({
             node,
             method,
-            ownerCallableId: callableStack.at(-1) ?? null,
+            ownerCallableId: callableStack.callables.at(-1) ?? null,
             resultBindingId: scalarAssignedResultBinding(
               projectedResultBindings,
             ),
@@ -115,7 +118,7 @@ const collectSpawns = (
     },
     exit: (node) => {
       ancestors.pop();
-      popCallable(node, callableStack);
+      callableStack.exit(node);
     },
   });
   return output;
@@ -149,7 +152,7 @@ const collectInteractions = (
 ): JavaScriptSemanticChildProcessInteraction[] => {
   const output: JavaScriptSemanticChildProcessInteraction[] = [];
   const callableIds = new Set(callables.map(({ callableId }) => callableId));
-  const callableStack: string[] = [];
+  const callableStack = createSemanticCallableIdStack(callableIds);
   const spawnByNode = new WeakMap<t.Node, SpawnCandidate>();
   const spawnsByBinding = new Map<string, SpawnCandidate[]>();
   for (const spawn of spawns) {
@@ -170,21 +173,19 @@ const collectInteractions = (
     spawnsByBinding,
   };
   traverseJavaScriptAst(program, {
-    enter: (node) => {
-      const callableId = semanticCallableIdForNode(node);
-      if (callableId !== null && callableIds.has(callableId))
-        callableStack.push(callableId);
+    enter: (node, parent) => {
+      callableStack.enter(node, parent);
       if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
         return;
       const interaction = childInteraction(
         node,
-        callableStack.at(-1) ?? null,
+        callableStack.callables.at(-1) ?? null,
         context,
       );
       if (interaction === null) return;
       output.push(interaction);
     },
-    exit: (node) => popCallable(node, callableStack),
+    exit: (node) => callableStack.exit(node),
   });
   return output;
 };
@@ -194,20 +195,18 @@ const childInteraction = (
   ownerCallableId: string | null,
   context: ChildInteractionContext,
 ): JavaScriptSemanticChildProcessInteraction | null => {
-  const { state, spawnByNode, spawnsByBinding } = context;
+  const { state } = context;
   const member = dataEffectMemberCallee(node);
   if (member === null) return null;
   const method = semanticStaticPropertyName(member.property, member.computed);
-  const binding = objectBinding(member.object, state);
-  const linked = resolveChildCandidates(
-    member.object,
-    binding,
-    spawnByNode,
-    spawnsByBinding,
-  );
-  if (linked.length === 0) return null;
   const classification = classifyInteraction(method, node.arguments[0]);
   if (classification === null) return null;
+  const binding = objectBinding(member.object, state);
+  const { candidates: linked, complete } = resolveChildCandidates(
+    member.object,
+    context,
+  );
+  if (linked.length === 0) return null;
   const { kind, interactionMethod, eventName } = classification;
   const listener = node.arguments[1];
   return {
@@ -222,19 +221,28 @@ const childInteraction = (
       .sort(compareUnicodeCodePoints),
     eventName: kind === "listener" ? eventName : null,
     signalName:
-      kind === "signal"
-        ? (dataEffectLiteralString(node.arguments[0]) ?? "SIGTERM")
-        : null,
+      kind === "signal" ? killSignalName(node.arguments, state) : null,
     listenerLocation:
       kind === "listener" && t.isNode(listener) ? range(listener) : null,
-    resolution:
-      linked.length === 1 &&
-      !linked[0]?.projectedResultBindings.some(
-        ({ bindingId }) => bindingId === binding?.bindingId,
-      )
-        ? "complete"
-        : "partial",
+    resolution: complete ? "complete" : "partial",
   };
+};
+
+// Only an omitted argument or the unshadowed global undefined selects the
+// SIGTERM default; an unresolved argument leaves the signal unknown.
+const killSignalName = (
+  args: t.CallExpression["arguments"],
+  state: JavaScriptSemanticAnalysisState,
+): string | null => {
+  const [signal] = args;
+  if (signal === undefined) return "SIGTERM";
+  const expression = unwrapJavaScriptExpression(signal).node;
+  if (
+    t.isUnaryExpression(expression, { operator: "void" }) ||
+    isUnshadowedGlobal(expression, state, "undefined")
+  )
+    return "SIGTERM";
+  return dataEffectLiteralString(signal);
 };
 
 const classifyInteraction = (
@@ -266,75 +274,117 @@ const childProcessMethod = (
   callee: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): JavaScriptSemanticChildProcessSpawn["method"] | null => {
-  if (t.isIdentifier(callee)) {
-    const binding = resolveSemanticBindingState(state, callee, callee.name);
-    return binding === undefined ? null : methodFromBinding(binding);
-  }
-  if (!t.isMemberExpression(callee) && !t.isOptionalMemberExpression(callee))
-    return null;
-  const method = admittedChildMethod(
-    semanticStaticPropertyName(callee.property, callee.computed),
+  const method = builtinDataEffectMethod(callee, state, [
+    "child_process",
+    "node:child_process",
+  ]);
+  return (
+    CHILD_PROCESS_METHODS.find((candidate) => candidate === method) ?? null
   );
-  if (method === null || !t.isIdentifier(callee.object)) return null;
-  const binding = resolveSemanticBindingState(
-    state,
-    callee.object,
-    callee.object.name,
-  );
-  return childProcessNamespace(binding) ? method : null;
 };
-
-const methodFromBinding = (
-  binding: JavaScriptSemanticBindingState,
-): JavaScriptSemanticChildProcessSpawn["method"] | null => {
-  for (const { specifier, importedPath } of binding.directOrigins) {
-    if (!childProcessModule(specifier)) continue;
-    const method = admittedChildMethod(importedPath.at(-1) ?? "");
-    if (method !== null) return method;
-  }
-  return null;
-};
-
-const admittedChildMethod = (
-  value: string,
-): JavaScriptSemanticChildProcessSpawn["method"] | null =>
-  CHILD_PROCESS_METHODS.find((candidate) => candidate === value) ?? null;
-
-const childProcessNamespace = (
-  binding: JavaScriptSemanticBindingState | undefined,
-): boolean =>
-  binding?.directOrigins.some(
-    ({ specifier, importedPath }) =>
-      childProcessModule(specifier) &&
-      semanticBuiltinNamespacePath(importedPath),
-  ) ?? false;
-
-const childProcessModule = (specifier: string): boolean =>
-  specifier === "child_process" || specifier === "node:child_process";
 
 const resolveChildCandidates = (
   node: t.Node,
-  binding: JavaScriptSemanticBindingState | undefined,
-  spawnByNode: WeakMap<t.Node, SpawnCandidate>,
-  spawnsByBinding: ReadonlyMap<string, readonly SpawnCandidate[]>,
-): readonly SpawnCandidate[] => {
-  const direct = spawnByNode.get(node);
-  if (direct !== undefined) return [direct];
-  return binding === undefined
-    ? []
-    : (spawnsByBinding.get(binding.bindingId) ?? []);
+  context: ChildInteractionContext,
+): {
+  readonly candidates: readonly SpawnCandidate[];
+  readonly complete: boolean;
+} => {
+  const { state, spawnByNode, spawnsByBinding } = context;
+  const candidates = new Set<SpawnCandidate>();
+  const fallback = new Set<SpawnCandidate>();
+  const pending = [node];
+  const visited = new Set<t.Node>();
+  let complete = true;
+  while (pending.length > 0) {
+    const current = unwrapJavaScriptExpression(pending.pop()!).node;
+    if (visited.has(current)) {
+      complete = false;
+      continue;
+    }
+    visited.add(current);
+    // Spawn-result assignment already admits await as an identity wrapper.
+    if (t.isAwaitExpression(current)) {
+      pending.push(current.argument);
+      continue;
+    }
+    const direct = spawnByNode.get(current);
+    if (direct !== undefined) {
+      candidates.add(direct);
+      continue;
+    }
+    const binding = t.isIdentifier(current)
+      ? resolveSemanticBindingState(state, current, current.name)
+      : undefined;
+    if (binding === undefined) {
+      complete = false;
+      continue;
+    }
+    for (const candidate of spawnsByBinding.get(binding.bindingId) ?? [])
+      fallback.add(candidate);
+    // An alias captures its source at its initializer read, not at the later
+    // interaction. The shared selector retains all sources across uncertain
+    // control flow, loops and writes in other activations.
+    const snapshot = semanticBindingAtRead(
+      binding,
+      current,
+      state.parentsByNode,
+    );
+    const selected = snapshot.binding;
+    const initializers = [
+      ...selected.initializers,
+      ...selected.referenceInitializers,
+    ];
+    // Defaults and other reference sources do not exclude a caller-supplied
+    // value, even when they are the binding's only retained source.
+    if (initializers.length !== 1 || selected.referenceInitializers.length > 0)
+      complete = false;
+    const stable = semanticStableInitializer(binding, state);
+    for (const initializer of initializers) {
+      if (state.conditionallySkippedExpressions.has(initializer.node))
+        complete = false;
+      if (initializer.projection.length > 0) {
+        complete = false;
+        continue;
+      }
+      // A lone assignment can still be later or belong to another activation.
+      // Only initialized lexical declarations exclude an earlier undefined value
+      // without a same-body ordering proof.
+      if (
+        !(stable === initializer && !binding.declarationKinds.has("var")) &&
+        snapshot.status !== "ordered"
+      )
+        complete = false;
+      pending.push(initializer.node);
+    }
+  }
+  // Preserve historical candidates with explicit uncertainty when the selected
+  // value cannot be established; a binding inventory alone never proves identity.
+  if (!complete) for (const candidate of fallback) candidates.add(candidate);
+  return {
+    candidates: [...candidates],
+    complete: complete && candidates.size === 1,
+  };
 };
-
 const spawnOptions = (candidate: SpawnCandidate): t.ObjectExpression | null => {
-  const index = candidate.method === "exec" ? 1 : 2;
-  const value = candidate.node.arguments[index];
+  const args = candidate.node.arguments;
+
+  const value =
+    candidate.method === "exec"
+      ? args[1]
+      : t.isObjectExpression(args[1])
+        ? args[1]
+        : args[2];
+
   return t.isObjectExpression(value) ? value : null;
 };
-
 const spawnArgvCount = (candidate: SpawnCandidate): number | null => {
   if (candidate.method === "exec") return null;
   const args = candidate.node.arguments[1];
-  return t.isArrayExpression(args) ? args.elements.length : null;
+  return t.isArrayExpression(args) &&
+    !args.elements.some((element) => t.isSpreadElement(element))
+    ? args.elements.length
+    : null;
 };
 
 const objectHasProperty = (
@@ -369,11 +419,6 @@ const objectBinding = (
   t.isIdentifier(node)
     ? resolveSemanticBindingState(state, node, node.name)
     : undefined;
-
-const popCallable = (node: t.Node, stack: string[]): void => {
-  const callableId = semanticCallableIdForNode(node);
-  if (callableId !== null && stack.at(-1) === callableId) stack.pop();
-};
 
 const spawnId = (candidate: SpawnCandidate): string =>
   `child:spawn:${String(candidate.node.start ?? -1)}:${String(candidate.node.end ?? -1)}`;

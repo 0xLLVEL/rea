@@ -121,7 +121,11 @@ it("exports every canonical scope with read authority for admission and keeps te
     );
   expect(timings.on.workflow_run).toBeUndefined();
   expect(timings.on.schedule).toHaveLength(1);
-  expect(timings.permissions).toEqual({ contents: "read", actions: "read" });
+  expect(timings.permissions).toEqual({
+    contents: "read",
+    actions: "read",
+    "pull-requests": "read",
+  });
   const checkout = timings.jobs.report.steps.find((step) =>
     step.uses?.startsWith("actions/checkout@"),
   );
@@ -154,6 +158,7 @@ it("holds native and provider fan-out behind static validation while portable fe
     "static",
     "build",
     "test-shard",
+    "test-source",
     "test",
     "docs",
     "required",
@@ -166,6 +171,115 @@ it("holds native and provider fan-out behind static validation while portable fe
     expect(job.if).not.toMatch(/always\(|cancelled\(/u);
   }
   expect(jobs["test-shard"]?.needs).not.toContain("static");
+});
+
+it("binds provider build reuse to the current run while keeping standalone dispatches independent", async () => {
+  const { jobs } = await workflow();
+  const consumers = [
+    "browser",
+    "binary_layout",
+    "evm",
+    "javascript_recovery",
+    "recorded_crash",
+    "web_network",
+    "web_runtime",
+    "web_source_map",
+  ];
+  const buildTerms = z
+    .string()
+    .parse(jobs.build?.if)
+    .split("||")
+    .map((term) => term.trim());
+  // Provider workflow edits select their lane without code=true. The build
+  // producer must still run, without selecting the portable test shards.
+  expect(new Set(buildTerms)).toEqual(
+    new Set(
+      ["code", ...consumers].map(
+        (scope) => `needs.changes.outputs.${scope} == 'true'`,
+      ),
+    ),
+  );
+  expect(jobs["test-shard"]?.if).toBe("needs.changes.outputs.code == 'true'");
+  for (const name of consumers) {
+    const caller = jobs[name];
+    expect(caller?.needs).toContain("build");
+    expect(caller?.with).toEqual({ build_cache_artifact: "rea-build-cache" });
+    const path = z.string().parse(caller?.uses);
+    const called = z
+      .object({
+        on: z.object({
+          workflow_call: z.object({
+            inputs: z.record(z.string(), z.unknown()),
+          }),
+          workflow_dispatch: z.unknown(),
+        }),
+        jobs: z.record(
+          z.string(),
+          z.object({
+            steps: z.array(
+              z.object({
+                uses: z.string().optional(),
+                with: z.record(z.string(), z.unknown()).optional(),
+              }),
+            ),
+          }),
+        ),
+      })
+      .parse(
+        parse(
+          await readFile(new URL(`../../../${path}`, import.meta.url), "utf8"),
+        ),
+      );
+    expect(called.on.workflow_call.inputs.build_cache_artifact).toMatchObject({
+      type: "string",
+      default: "",
+    });
+    expect(Object.hasOwn(called.on, "workflow_dispatch")).toBe(true);
+    for (const job of Object.values(called.jobs))
+      expect(
+        job.steps.find(
+          (step) => step.uses === "./.github/actions/portable-build-cache",
+        )?.with,
+      ).toEqual({ build_cache_artifact: "${{ inputs.build_cache_artifact }}" });
+  }
+  const action = z
+    .object({
+      runs: z.object({
+        steps: z.array(
+          z.object({
+            id: z.string().optional(),
+            uses: z.string().optional(),
+            if: z.string().optional(),
+            with: z.record(z.string(), z.unknown()).optional(),
+            "continue-on-error": z.boolean().optional(),
+          }),
+        ),
+      }),
+    })
+    .parse(
+      parse(
+        await readFile(
+          new URL(
+            "../../../.github/actions/portable-build-cache/action.yml",
+            import.meta.url,
+          ),
+          "utf8",
+        ),
+      ),
+    );
+  const download = action.runs.steps.find((step) =>
+    step.uses?.startsWith("actions/download-artifact@"),
+  );
+  expect(download?.with).toEqual({
+    name: "${{ inputs.build_cache_artifact }}",
+    path: ".turbo/cache/",
+  });
+  expect(download?.if).toBe("inputs.build_cache_artifact != ''");
+  expect(download?.["continue-on-error"]).not.toBe(true);
+  for (const step of action.runs.steps.filter(
+    (step) => step.id === "plan" || step.uses?.startsWith("actions/cache"),
+  ))
+    expect(step.if).toContain("inputs.build_cache_artifact == ''");
 });
 
 it("runs workflow validation inside required static checks when selected", async () => {
@@ -256,9 +370,11 @@ it("keeps fast feedback separate from complete qualification and release proof",
   expect(ci.concurrency["cancel-in-progress"]).toBe(
     "${{ github.event_name == 'pull_request' && inputs.source_sha == '' && !contains(github.event.pull_request.labels.*.name, 'ci:full') }}",
   );
-  expect(ci.jobs.required?.if).toBe("${{ always() }}");
+  // Failed dependencies still reach the gate, but superseded PR runs must
+  // release their concurrency slot without waiting for another runner.
+  expect(ci.jobs.required?.if).toBe("${{ !cancelled() }}");
   const shards = ci.jobs["test-shard"]?.steps ?? [];
-  const fast = shards.find((step) => step.run?.includes("npm run test:run"));
+  const fast = shards.find((step) => step.run?.includes("npm run test:built"));
   const full = shards.find((step) => step.run?.includes("test:ci:shard:run"));
   expect(fast?.if).toBe("needs.changes.outputs.tier == 'fast'");
   expect(fast?.run).toContain("--reporter=blob");
@@ -287,6 +403,7 @@ it.each([
     for (const [scope, lane] of [
       ["sqlite", "sqlite-runtime"],
       ["workflows", "static"],
+      ["ghidra_bridge", "ghidra_bridge"],
     ] as const) {
       // GitHub exposes only direct dependencies in the required job's needs context.
       const needs: Record<
@@ -392,6 +509,47 @@ it("rejects incomplete or malformed classification even when available jobs succ
     ).rejects.toMatchObject({
       code: 1,
       stderr: expect.stringContaining("scope outputs: sqlite"),
+    });
+  }
+});
+
+it("fails fast only for ordinary PR matrices and rejects partial portable feedback", async () => {
+  const { jobs } = await workflow();
+  expect(jobs["test-shard"]?.strategy).toMatchObject({
+    "fail-fast":
+      "${{ github.event_name == 'pull_request' && needs.changes.outputs.tier == 'fast' }}",
+  });
+  expect(jobs["package-e2e"]?.strategy).toMatchObject({ "fail-fast": false });
+  const flags = await scopeFlags();
+  for (const result of ["failure", "cancelled", "skipped", "missing"]) {
+    // Even an incorrectly successful report merge cannot hide matrix failure.
+    const needs: Record<string, unknown> = {
+      changes: {
+        result: "success",
+        outputs: {
+          ...Object.fromEntries(flags.map((flag) => [flag, "false"])),
+          tier: "fast",
+          code: "true",
+        },
+      },
+      static: { result: "success" },
+      build: { result: "success" },
+      test: { result: "success" },
+      ...(result === "missing" ? {} : { "test-shard": { result } }),
+    };
+    await expect(
+      executeWorkflowFixture(
+        process.execPath,
+        [
+          fileURLToPath(
+            new URL("../../../scripts/ci/required.mjs", import.meta.url),
+          ),
+        ],
+        { env: { ...process.env, CI_JOBS: JSON.stringify(needs) } },
+      ),
+    ).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining("test-shard"),
     });
   }
 });

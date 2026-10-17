@@ -16,6 +16,7 @@ import {
   jadxXrefsSchema,
   normalizeJadxText,
 } from "./JadxProtocol.js";
+import { projectManifestComponents } from "../domain/android/androidManifestComponents.js";
 import { JADX_RELEASE } from "./JadxRelease.js";
 
 /** The adapter consumes tool payloads, never provider RPC details outside this layer. */
@@ -45,7 +46,7 @@ const methodsOf = (summary: ClassSummary) => {
       reported_signature: method.signature,
       overload_index: index,
       is_constructor: method.is_constructor,
-      dex_descriptor: null,
+      dex_descriptor: method.dex_descriptor,
     };
   });
 };
@@ -115,6 +116,12 @@ const inspectPackage = async (
   const manifest = normalizeJadxText(
     await tools.text("get_android_manifest", {}),
   );
+  const projected = projectManifestComponents({
+    manifestText: manifest.text,
+    manifestStatus: manifest.status,
+    packageName: app.package || null,
+    targetSdk: app.target_sdk || null,
+  });
   return androidResultSchemas.inspect_android_package.parse({
     engine,
     package_name: app.package || null,
@@ -124,6 +131,9 @@ const inspectPackage = async (
     target_sdk: app.target_sdk || null,
     permissions: app.permissions,
     manifest,
+    components: [...projected.components],
+    component_coverage: projected.coverage,
+    component_unknowns: [...projected.unknowns],
     class_count: loaded.class_count,
     resource_count: loaded.resource_count,
     signature_verification: "not_performed",
@@ -314,11 +324,25 @@ const traceReferences = async (
 ): Promise<JsonValue> => {
   const methodName = request.input.method_name;
   const candidates = matchingMethods(summary, request);
-  if (candidates.length > 1)
-    throw new AnalysisCapabilityUnavailableError(
-      "jadx",
-      request.operation,
-      `References require a unique method name; ${summary.full_name}.${methodName} has ${candidates.length} overloads. No unambiguous reference result is available.`,
+  if (methodName === undefined && request.input.overload_index !== undefined)
+    inputFailure(
+      request,
+      "overload_index",
+      "Method name is required for an overload index.",
+    );
+  if (candidates.length > 1 && request.input.overload_index === undefined)
+    inputFailure(
+      request,
+      "overload_index",
+      `Select one of ${candidates.length} overloads: ${candidates.map((method) => `${method.overload_index}: ${method.reported_signature}`).join("; ")}`,
+    );
+  const index = request.input.overload_index ?? 0;
+  const selected = methodName === undefined ? undefined : candidates[index];
+  if (methodName !== undefined && selected === undefined)
+    inputFailure(
+      request,
+      "overload_index",
+      `Index ${index} is outside the ${candidates.length} matching overloads.`,
     );
   const expectedTarget =
     methodName === undefined
@@ -329,7 +353,9 @@ const traceReferences = async (
       methodName === undefined ? "get_xrefs_to_class" : "get_xrefs_to_method",
       {
         class_name: summary.full_name,
-        ...(methodName === undefined ? {} : { method_name: methodName }),
+        ...(methodName === undefined
+          ? {}
+          : { method_name: methodName, overload_index: index }),
         limit: 2_147_483_647,
         resolve_line: false,
       },
@@ -337,6 +363,9 @@ const traceReferences = async (
   );
   if (
     xrefs.target !== expectedTarget ||
+    (selected !== undefined &&
+      (xrefs.overload_index !== index ||
+        xrefs.reported_signature !== selected.reported_signature)) ||
     xrefs.total !== xrefs.count ||
     xrefs.count !== xrefs.items.length
   )
@@ -348,6 +377,9 @@ const traceReferences = async (
     engine,
     class_name: summary.full_name,
     method_name: methodName ?? null,
+    overload_index: selected?.overload_index ?? null,
+    reported_signature: selected?.reported_signature ?? null,
+    dex_descriptor: selected?.dex_descriptor ?? null,
     total: xrefs.total,
     references: xrefs.items.map((reference) => ({
       kind: reference.kind,
@@ -357,7 +389,10 @@ const traceReferences = async (
       top_class: reference.top_class,
       source_line: null,
       dex_offset: null,
+      direct_invokes: reference.direct_invokes ?? null,
+      direct_invokes_exhaustive: reference.direct_invokes_exhaustive ?? null,
     })),
     coverage: "complete",
+    reference_unit: "using_node",
   });
 };

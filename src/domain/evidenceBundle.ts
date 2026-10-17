@@ -16,14 +16,17 @@ import {
 } from "./residualUnknown.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
 
-const artifactManifestSchema = evidenceSchema.shape.subject
-  .unwrap()
-  .pick({
-    digest: true,
-    format: true,
-    architecture: true,
-  })
-  .strict();
+const [detectedSubjectSchema, rawSubjectSchema] =
+  evidenceSchema.shape.subject.unwrap().options;
+const manifestFields = {
+  digest: true,
+  format: true,
+  architecture: true,
+} as const;
+const artifactManifestSchema = z.discriminatedUnion("format", [
+  detectedSubjectSchema.pick(manifestFields),
+  rawSubjectSchema.pick(manifestFields),
+]);
 const providerManifestSchema = providerSchema;
 const environmentManifestSchema = evidenceSchema.shape.environment.unwrap();
 const scenarioManifestSchema = z.strictObject({
@@ -49,6 +52,22 @@ export const evidenceBundleSchema = z.strictObject({
 export type EvidenceBundle = z.infer<typeof evidenceBundleSchema>;
 const immutableBundles = new WeakMap<object, EvidenceBundle>();
 
+/** Caller input has valid shape but is not in authenticated canonical form. */
+export class NonCanonicalEvidenceBundleError extends TypeError {
+  constructor() {
+    super("Evidence bundle manifests are not canonical");
+    this.name = "NonCanonicalEvidenceBundleError";
+  }
+}
+
+/** Caller input lists the same Evidence record more than once. */
+export class DuplicateEvidenceRecordError extends TypeError {
+  constructor() {
+    super("Evidence bundle contains duplicate record IDs");
+    this.name = "DuplicateEvidenceRecordError";
+  }
+}
+
 /** Build and authenticate a sealed bundle while reusing immutable Evidence records. */
 export const createImmutableEvidenceBundle = (
   records: readonly Evidence[],
@@ -59,7 +78,7 @@ export const createImmutableEvidenceBundle = (
     new Set(checkedRecords.map(({ evidence_id }) => evidence_id)).size !==
     checkedRecords.length
   )
-    throw new TypeError("Evidence bundle contains duplicate record IDs");
+    throw new DuplicateEvidenceRecordError();
   const checkedUnknowns = unknowns.map((unknown) =>
     residualUnknownSchema.parse(unknown),
   );
@@ -85,11 +104,11 @@ export const createEvidenceBundle = (
         subject === null
           ? []
           : [
-              {
+              artifactManifestSchema.parse({
                 digest: subject.digest,
                 format: subject.format,
                 architecture: subject.architecture,
-              },
+              }),
             ],
       ),
     ),
@@ -279,7 +298,7 @@ const authenticateBundle = (
 ): EvidenceBundle => {
   const recordIds = parsed.records.map(({ evidence_id: id }) => id);
   if (new Set(recordIds).size !== recordIds.length)
-    throw new TypeError("Evidence bundle contains duplicate record IDs");
+    throw new DuplicateEvidenceRecordError();
   validateUnknownGraph(parsed.unknowns, parsed.records);
   const canonical = createEvidenceBundle(
     parsed.records.map((record, index) => {
@@ -304,7 +323,7 @@ const authenticateBundle = (
     parsed.unknowns,
   );
   if (JSON.stringify(parsed) !== JSON.stringify(canonical))
-    throw new TypeError("Evidence bundle manifests are not canonical");
+    throw new NonCanonicalEvidenceBundleError();
   if (seal) {
     freezeJsonSnapshot(canonical);
     immutableBundles.set(canonical, canonical);

@@ -1,5 +1,8 @@
 import { z } from "zod";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type {
+  AnalysisError,
+  AnalysisErrorOptions,
+} from "../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
@@ -43,16 +46,20 @@ export const executeProviderOperation = async <
   provider: ProviderOperationPort<TRequest>,
   confidence: "observed" | "derived",
 ): Promise<Result<Evidence, AnalysisError>> => {
-  if (options?.signal?.aborted === true)
-    return err(new AnalysisCancelledError(operation));
+  if (options?.signal?.aborted)
+    return err(
+      new AnalysisCancelledError(operation, { cause: options.signal.reason }),
+    );
   const request = schema.safeParse({ operation, input });
   if (!request.success)
     return err(new AnalysisInputError(operation, { cause: request.error }));
   const executed = await provider.execute(request.data, options);
   if (!executed.ok) return executed;
   const execution = executed.value;
-  return ok(
-    createEvidence(execution.subject ?? undefined, execution.provider, {
+  const evidence = createEvidence(
+    execution.subject ?? undefined,
+    execution.provider,
+    {
       operation,
       parameters: jsonObjectSchema.parse(request.data.input),
       result: execution.result,
@@ -60,6 +67,24 @@ export const executeProviderOperation = async <
       limitations: execution.limitations,
       locations: execution.locations,
       confidence,
-    }),
+    },
   );
+  return completeProviderEvidence(evidence, options?.signal);
+};
+
+/** Classify completion after Evidence assembly, preserving facts on late abort. */
+export const completeProviderEvidence = (
+  evidence: Evidence,
+  signal?: AbortSignal,
+  capturedOutput?: AnalysisErrorOptions["capturedOutput"],
+): Result<Evidence, AnalysisCancelledError> => {
+  if (signal?.aborted)
+    return err(
+      new AnalysisCancelledError(evidence.operation, {
+        cause: signal.reason,
+        partialObservation: evidence,
+        ...(capturedOutput === undefined ? {} : { capturedOutput }),
+      }),
+    );
+  return ok(evidence);
 };

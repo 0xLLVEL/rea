@@ -164,7 +164,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
             cause instanceof ArtifactReaderFailure ? cause.cleanup : undefined;
           if (options?.signal?.aborted)
             throw new AnalysisCancelledError(OPERATION, {
-              cause,
+              cause: options.signal.reason,
               ...(cleanup === undefined ? {} : { cleanup }),
             });
           throw new AnalysisArtifactChangedError(
@@ -180,6 +180,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         args: readonly string[],
         acceptNonZeroExit = false,
       ) => {
+        capturedOutput = undefined;
         await verifySnapshot();
         const snapshot = await runOwnedCommand(
           {
@@ -268,9 +269,11 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           undefined,
           this.#resources,
         );
-        const source = new TextDecoder("utf-8", { fatal: true }).decode(
-          bytes.bytes,
-        );
+        // Keep source characters intact so locations match the hashed artifact.
+        const source = new TextDecoder("utf-8", {
+          fatal: true,
+          ignoreBOM: true,
+        }).decode(bytes.bytes);
         glue.push({
           artifact: { path, sha256: bytes.sha256, bytes: bytes.bytes.length },
           ...associateWasmGlue(
@@ -362,8 +365,13 @@ export class WabtArtifactProvider implements WasmArtifactPort {
           OPERATION,
           "Unexpected WABT decoding output.",
         );
-      const { imports, exports, customSectionNames, debugModuleNames } =
-        parseWabtWat(wat.stdout.text);
+      const {
+        imports,
+        exports,
+        customSectionNames,
+        debugModuleNames,
+        interface: interfaceFacts,
+      } = parseWabtWat(wat.stdout.text);
       capturedOutput = {
         stdout: dump.stdout.text,
         stderr: dump.stderr.text,
@@ -388,6 +396,7 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         sections,
         imports,
         exports,
+        interface: interfaceFacts,
         headers,
         details,
         wat: {
@@ -439,21 +448,40 @@ export class WabtArtifactProvider implements WasmArtifactPort {
         resource: root.path,
         root,
       });
+      let partialObservation = result.ok
+        ? undefined
+        : result.error.partialObservation;
+      if (
+        result.ok &&
+        (options?.signal?.aborted || cleanup.kind === "failed")
+      ) {
+        partialObservation = createEvidence(
+          result.value.subject ?? undefined,
+          result.value.provider,
+          {
+            operation: OPERATION,
+            parameters: input,
+            result: result.value.result,
+            confidence: "observed",
+            locations: result.value.locations,
+            limitations: result.value.limitations,
+          },
+        );
+      }
+      if (result.ok && options?.signal?.aborted) {
+        result = err(
+          new AnalysisCancelledError(
+            OPERATION,
+            partialObservation === undefined
+              ? undefined
+              : { partialObservation },
+          ),
+        );
+      }
       if (cleanup.kind === "failed") {
         const cause = cleanup.cause;
-        const partialObservation = result.ok
-          ? createEvidence(
-              result.value.subject ?? undefined,
-              result.value.provider,
-              {
-                operation: OPERATION,
-                parameters: input,
-                result: result.value.result,
-                confidence: "observed",
-                locations: result.value.locations,
-                limitations: result.value.limitations,
-              },
-            )
+        const retainedObservation = result.ok
+          ? partialObservation
           : result.error.partialObservation;
         result = err(
           new ProviderCleanupError(
@@ -468,9 +496,9 @@ export class WabtArtifactProvider implements WasmArtifactPort {
             {
               operation: OPERATION,
               cause,
-              ...(partialObservation === undefined
+              ...(retainedObservation === undefined
                 ? {}
-                : { partialObservation }),
+                : { partialObservation: retainedObservation }),
             },
           ),
         );

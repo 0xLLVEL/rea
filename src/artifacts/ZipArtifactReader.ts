@@ -2,7 +2,29 @@ import type { FileHandle } from "node:fs/promises";
 import { PassThrough, type Readable } from "node:stream";
 import { once } from "node:events";
 
-import { Reader, ZipReader, type Entry, type FileEntry } from "@zip.js/zip.js";
+import {
+  ERR_AMBIGUOUS_ARCHIVE,
+  ERR_BAD_FORMAT,
+  ERR_CENTRAL_DIRECTORY_NOT_FOUND,
+  ERR_ENCRYPTED_CENTRAL_DIRECTORY,
+  ERR_ENTRY_DATA_OUT_OF_BOUNDS,
+  ERR_EOCDR_LOCATOR_ZIP64_NOT_FOUND,
+  ERR_EOCDR_NOT_FOUND,
+  ERR_EXTRAFIELD_ZIP64_NOT_FOUND,
+  ERR_INVALID_COMPRESSED_DATA,
+  ERR_INVALID_CRC32,
+  ERR_INVALID_UNCOMPRESSED_SIZE,
+  ERR_LOCAL_FILE_HEADER_NOT_FOUND,
+  ERR_OVERLAPPING_ENTRY,
+  ERR_SPLIT_ZIP_FILE,
+  ERR_UNSUPPORTED_COMPRESSION,
+  ERR_UNSUPPORTED_ENCRYPTION,
+  ERR_UNSUPPORTED_UINT64,
+  Reader,
+  ZipReader,
+  type Entry,
+  type FileEntry,
+} from "@zip.js/zip.js";
 
 import {
   ArtifactReaderFailure,
@@ -105,6 +127,13 @@ class NodeFileReader extends Reader<string> {
     const handle = this.#handle;
     if (handle === undefined) throw new Error("ZIP reader is not initialized");
     const readBytes = Math.min(length, this.size - index);
+    // A central-directory offset can point past EOF. Type that malformed ZIP
+    // read before a negative size reaches Buffer.alloc and becomes an I/O error.
+    if (readBytes < 0)
+      throw new ArtifactReaderFailure(
+        "format",
+        `ZIP archive is malformed: read at ${index} extends beyond the ${this.size}-byte archive`,
+      );
     if (
       this.maximumReadBytes !== undefined &&
       readBytes > this.maximumReadBytes
@@ -149,6 +178,9 @@ export class ZipArtifactReader implements ArtifactReader {
     this.#reader = new ZipReader(this.#source, {
       checkSignature: true,
       checkOverlappingEntry: true,
+      // Unflagged names use the ZIP legacy encoding (CP437); the UTF-8 flag
+      // and validated Unicode Path extra fields remain authoritative.
+      filenameEncoding: "cp437",
       // REA applies its own provider-neutral path validation in scanReader and
       // must preserve that typed failure instead of zip.js rejecting first.
       filenameValidation: "tolerant",
@@ -159,13 +191,14 @@ export class ZipArtifactReader implements ArtifactReader {
     let index = 0;
     // A traversal owns its accounting, including overlapping or repeated passes.
     let declaredFileBytes = 0;
-    for await (const entry of this.#reader.getEntriesGenerator({
-      decodeText: decodeZipEntryText,
-    })) {
+    for await (const entry of typedZipFailures(
+      this.#reader.getEntriesGenerator({ decodeText: decodeZipEntryText }),
+    )) {
       abortIfNeeded(signal);
       // ZIP member identity is its directory occurrence, not its filename.
       // Logical path uniqueness belongs to the artifact inventory boundary.
       const metadata = projectZipEntry(entry, index++);
+      if (metadata === undefined) continue;
       // zip.js enforces each member's declared output size, so this sum bounds streamed work.
       if (
         metadata.kind === "file" &&
@@ -233,19 +266,38 @@ export class ZipArtifactReader implements ArtifactReader {
   }
 }
 
-const projectZipEntry = (entry: Entry, index: number): ArtifactEntry => {
-  const symlink = isSymlink(entry);
+const projectZipEntry = (
+  entry: Entry,
+  index: number,
+): ArtifactEntry | undefined => {
+  const kind = isSymlink(entry)
+    ? "symlink"
+    : entry.directory
+      ? "directory"
+      : "file";
+  const sourcePath = zipEntryPath(entry);
+  const path = sourcePath.replace(/^(?:\.\/)+/u, "");
+  // Root directory markers carry no inventory occurrence. A file with this
+  // spelling is still passed to the shared path validator and rejected there.
+  if (kind === "directory" && (path === "" || path === ".")) return undefined;
   return {
-    path: zipEntryPath(entry),
-    kind: entry.directory ? "directory" : symlink ? "symlink" : "file",
-    declaredSize: entry.directory ? null : entry.uncompressedSize,
-    compressedSize: entry.directory ? null : entry.compressedSize,
+    path,
+    kind,
+    declaredSize: kind === "directory" ? null : entry.uncompressedSize,
+    compressedSize: kind === "directory" ? null : entry.compressedSize,
     executable: entry.executable,
     encrypted: entry.encrypted,
     byteOffset: null,
     declaredSha256: null,
     unpacked: false,
-    limitations: symlink ? ["Archive symlink target was not read."] : [],
+    limitations: [
+      ...(kind === "symlink" ? ["Archive symlink target was not read."] : []),
+      ...(path === sourcePath
+        ? []
+        : [
+            `ZIP member name ${JSON.stringify(sourcePath)} has a leading current-directory prefix omitted from its logical path.`,
+          ]),
+    ],
     adapterKey: `zip-entry:${index}`,
   };
 };
@@ -327,7 +379,7 @@ const extractStream = (entry: FileEntry, signal?: AbortSignal): Readable => {
       output.end();
     },
     abort: (reason) => {
-      output.destroy(toError(reason));
+      output.destroy(toError(typedZipFailure(reason)));
     },
   });
   void entry
@@ -337,9 +389,60 @@ const extractStream = (entry: FileEntry, signal?: AbortSignal): Readable => {
       checkOverlappingEntry: true,
       onprogress: () => abortIfNeeded(signal),
     })
-    .catch((cause: unknown) => output.destroy(toError(cause)));
+    .catch((cause: unknown) => output.destroy(toError(typedZipFailure(cause))));
   return output;
 };
+
+/** zip.js reports archive faults as plain errors identified by message. */
+const ZIP_FAILURE_REASONS: ReadonlyMap<string, "format" | "unavailable"> =
+  new Map([
+    ...[
+      ERR_AMBIGUOUS_ARCHIVE,
+      ERR_BAD_FORMAT,
+      ERR_CENTRAL_DIRECTORY_NOT_FOUND,
+      ERR_ENTRY_DATA_OUT_OF_BOUNDS,
+      ERR_EOCDR_LOCATOR_ZIP64_NOT_FOUND,
+      ERR_EOCDR_NOT_FOUND,
+      ERR_EXTRAFIELD_ZIP64_NOT_FOUND,
+      ERR_INVALID_COMPRESSED_DATA,
+      ERR_INVALID_CRC32,
+      ERR_INVALID_UNCOMPRESSED_SIZE,
+      ERR_LOCAL_FILE_HEADER_NOT_FOUND,
+      ERR_OVERLAPPING_ENTRY,
+      ERR_UNSUPPORTED_UINT64,
+    ].map((message) => [message, "format"] as const),
+    ...[
+      ERR_ENCRYPTED_CENTRAL_DIRECTORY,
+      ERR_SPLIT_ZIP_FILE,
+      ERR_UNSUPPORTED_COMPRESSION,
+      ERR_UNSUPPORTED_ENCRYPTION,
+    ].map((message) => [message, "unavailable"] as const),
+  ]);
+
+/** Type a zip.js archive fault so consumers do not report it as file I/O. */
+const typedZipFailure = (cause: unknown): unknown => {
+  if (!(cause instanceof Error) || cause instanceof ArtifactReaderFailure)
+    return cause;
+  const reason = ZIP_FAILURE_REASONS.get(cause.message);
+  if (reason === undefined) return cause;
+  return new ArtifactReaderFailure(
+    reason,
+    reason === "format"
+      ? `ZIP archive is malformed: ${cause.message}`
+      : `ZIP archive uses an unsupported feature: ${cause.message}`,
+    { cause },
+  );
+};
+
+async function* typedZipFailures<T>(
+  source: AsyncIterable<T>,
+): AsyncIterable<T> {
+  try {
+    yield* source;
+  } catch (cause: unknown) {
+    throw typedZipFailure(cause);
+  }
+}
 
 const isSymlink = (entry: Entry): boolean =>
   entry.unixMode !== undefined && (entry.unixMode & 0o170000) === 0o120000;
