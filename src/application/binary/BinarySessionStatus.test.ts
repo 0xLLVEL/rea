@@ -119,6 +119,7 @@ const project = async (
     string,
     { readonly reason: string }
   > = new Map(),
+  isOperationAdvertised?: (operation: string) => boolean,
 ) => {
   const route: SessionProviderRoute = {
     identity: providerA,
@@ -144,6 +145,7 @@ const project = async (
       runId: undefined,
       runtimeLineageSnapshots: [],
       requestActivitySnapshots: [],
+      ...(isOperationAdvertised === undefined ? {} : { isOperationAdvertised }),
     }),
   );
 };
@@ -356,6 +358,32 @@ describe("binary session provider capability projection", () => {
     expect(
       expandCanonicalCapabilities(otherCandidate?.capabilities ?? []),
     ).toEqual(expectedExpandedCandidateCapabilities[1]);
+  });
+
+  it("reports only operations the caller advertises", async () => {
+    const status = await project(
+      selectedCapabilities,
+      [
+        candidate(providerA, selectedCapabilities),
+        candidate(providerB, otherCapabilities),
+      ],
+      new Map(),
+      (operation) => operation !== "read_bytes",
+    );
+
+    // A scoped registration hides these tools from `tools/list`, so naming
+    // them here would direct the agent to a call that always fails.
+    expect(
+      expandCanonicalCapabilities(status.capabilities).map(
+        ({ operation }) => operation,
+      ),
+    ).toEqual(["procedure_info", "xrefs"]);
+    expect(
+      expandCanonicalCapabilities(
+        status.analysis_provider_candidates[0]?.capabilities ?? [],
+      ).map(({ operation }) => operation),
+    ).toEqual(["procedure_info", "xrefs"]);
+    expect(status.analysis_provider_candidates[1]?.capabilities).toEqual([]);
   });
 
   it("keeps empty route and candidate capability collections empty", async () => {

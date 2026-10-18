@@ -141,4 +141,38 @@ describe("MCP tool family advertising", () => {
       expect(calls.sort()).toEqual([...probed].sort());
     },
   );
+
+  it("reports only advertised operations in binary_session capabilities", async () => {
+    const server = scopedServer(new Set(["session"]));
+    let isOperationAdvertised: ((operation: string) => boolean) | undefined;
+    registerSessionStatusTool({
+      server,
+      session: {
+        status: (options?: {
+          readonly isOperationAdvertised?: (operation: string) => boolean;
+        }) => {
+          isOperationAdvertised = options?.isOperationAdvertised;
+          return {};
+        },
+      } as unknown as BinarySessionPort,
+      contract: toolContract("binary_session"),
+      startedAt: new Date().toISOString(),
+      availabilityPolicy: () => ({ processCaptureEnabled: false }),
+      androidAnalysisAvailability: async () => ({
+        status: "unavailable",
+        code: "runtime_missing",
+        reason: "android runtime is unavailable",
+        diagnostics: {},
+      }),
+    });
+    await withClient(server, async (client) => {
+      await client.callTool({ name: "binary_session", arguments: {} });
+    });
+
+    // The status projection must use the same scope as `tools/list`; naming a
+    // disabled operation here would send the agent to a call that always fails.
+    expect(isOperationAdvertised).toBeDefined();
+    expect(isOperationAdvertised?.("open_binary")).toBe(true);
+    expect(isOperationAdvertised?.("inspect_macho")).toBe(false);
+  });
 });

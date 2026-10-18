@@ -32,6 +32,14 @@ interface BinarySessionStatusInput {
   readonly providerOperationHealth?: ProviderOperationHealth | null;
   readonly cleanupPending?: boolean;
   readonly signal?: AbortSignal;
+  /**
+   * Which capability operations the caller can invoke. A registration that
+   * advertises a tool-family scope must not report operations whose tools it
+   * hides, so its status passes the same predicate it applies to `tools/list`.
+   * Omission means this caller cannot call that operation; the canonical
+   * catalog stays `tools/list`. Absent means every operation is reportable.
+   */
+  readonly isOperationAdvertised?: (operation: string) => boolean;
 }
 
 /** Project internal provider routing state into the caller-visible session status. */
@@ -46,9 +54,12 @@ export const binarySessionStatus = async ({
   providerOperationHealth,
   cleanupPending = false,
   signal,
+  isOperationAdvertised = () => true,
 }: BinarySessionStatusInput): Promise<JsonValue> => {
+  const reportable = (operation: string): boolean =>
+    operation !== "inventory_artifact" && isOperationAdvertised(operation);
   const routeCapabilities = [...route.capabilities.values()]
-    .filter(({ operation }) => operation !== "inventory_artifact")
+    .filter(({ operation }) => reportable(operation))
     .sort((left, right) =>
       compareUnicodeCodePoints(left.operation, right.operation),
     )
@@ -81,7 +92,7 @@ export const binarySessionStatus = async ({
     capabilities: providerCapabilitySets(
       candidate.capabilities
         .slice()
-        .filter(({ operation }) => operation !== "inventory_artifact")
+        .filter(({ operation }) => reportable(operation))
         .sort((left, right) =>
           compareUnicodeCodePoints(left.operation, right.operation),
         ),

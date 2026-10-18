@@ -97,7 +97,13 @@ export const registerSessionStatusTool = (
         adbAvailability = adb;
         apktoolAvailability = apktool;
         jebAvailability = jeb;
-        status = await session.status({ signal: context.mcpReq.signal });
+        // The status report must not name operations this registration hides:
+        // an agent reading `capabilities` would otherwise call a disabled tool.
+        status = await session.status({
+          signal: context.mcpReq.signal,
+          isOperationAdvertised: (operation) =>
+            server.advertisesTool(operation),
+        });
       } catch (cause) {
         if (!(cause instanceof AnalysisError)) throw cause;
         return server.delivery.toCallToolResult(err(cause), contract);
