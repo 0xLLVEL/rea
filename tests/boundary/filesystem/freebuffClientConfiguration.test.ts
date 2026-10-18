@@ -12,6 +12,7 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
+import { ClientConfigurationPublication } from "../../../src/application/ClientConfigurationPublication.js";
 import { npxRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
 import { detectClients } from "../../../src/application/SetupHost.js";
@@ -269,7 +270,8 @@ describe("uninstall applicability for shared FreeBuff storage", () => {
           : readFile(path, "utf8"),
       copy: (source, destination) =>
         copyFile(source, destination, fsConstants.COPYFILE_EXCL),
-      writeText: (path, contents) => writeFile(path, contents),
+      publishConfiguration: (path, contents, original) =>
+        ClientConfigurationPublication.write(path, contents, original),
       stat: (path) =>
         path === discovery ? Promise.reject(denied()) : lstat(path),
       remove: (path) => rm(path, { recursive: true }),
