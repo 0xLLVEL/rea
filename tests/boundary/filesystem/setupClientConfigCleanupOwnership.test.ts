@@ -59,17 +59,26 @@ afterEach(() => {
   lstatMock.mockReset();
 });
 
-const holdReadHandle = (path: string, reason: string, initiallyHeld = true) => {
+const holdReadHandle = (
+  path: string,
+  reason: string,
+  initiallyHeld = true,
+  maxFailures = Number.POSITIVE_INFINITY,
+) => {
   const closeAttempts: FileHandle[] = [];
   let released = false;
   let held = initiallyHeld;
+  let remainingFailures = maxFailures;
   openMock.mockImplementation(async (...args) => {
     const handle = await actualFs.open(...args);
     if (String(args[0]) !== path) return handle;
     const nativeClose = handle.close.bind(handle);
     vi.spyOn(handle, "close").mockImplementation(async () => {
       closeAttempts.push(handle);
-      if (held && !released) throw new Error(reason);
+      if (held && !released && remainingFailures > 0) {
+        remainingFailures -= 1;
+        throw new Error(reason);
+      }
       await nativeClose();
     });
     return handle;
@@ -395,11 +404,12 @@ it("keeps the ZCode fallback row when its profile probe is unresolved", async ()
   }
 });
 
-it("serves a completed removal reread when its handle repeatedly fails to close", async () => {
+it("serves a completed removal reread when its close retry releases the handle", async () => {
   // Preflight saw no owned row; another writer adds one before removal. The
-  // reread completes but its handle never closes: the completed text must
-  // still drive removal instead of softening to retained and purging data
-  // around the newly active registration.
+  // reread's first close fails but its cleanup retry releases the handle:
+  // the completed text is the ownership evidence that drives removal of the
+  // concurrently added row instead of softening to retained and leaving it
+  // active while data is purged.
   const home = await createTestTempDirectory("rea-freebuff-reread-close-");
   const setupHost = systemSetupHost(
     { platform: "linux", homeDirectory: home } as DoctorHost,
@@ -414,13 +424,14 @@ it("serves a completed removal reread when its handle repeatedly fails to close"
     client.configPath,
     '{"mcpServers":{"rea":{"command":"foreign-server","args":[]}}}',
   );
-  const state = join(home, ".rea", "state.json");
-  await mkdir(dirname(state), { recursive: true });
-  await writeFile(state, "{}\n");
+  const cacheOwned = join(home, ".rea", "cache", "owned");
+  await mkdir(dirname(cacheOwned), { recursive: true });
+  await writeFile(cacheOwned, "owned\n");
   const { hold, release } = holdReadHandle(
     client.configPath,
     "held removal reread handle",
     false,
+    1,
   );
   const base = systemUninstallHost(home, undefined, { HOME: home }, "linux");
   const host = {
@@ -437,18 +448,14 @@ it("serves a completed removal reread when its handle repeatedly fails to close"
   };
   try {
     const result = await runUninstall(true, host);
-    expect(result.status).toBe("failed");
+    expect(result.status).toBe("complete");
     expect(result.items).toContainEqual(
-      expect.objectContaining({ name: "freebuff", status: "failed" }),
+      expect.objectContaining({ name: "freebuff", status: "removed" }),
     );
-    expect(result.items).toContainEqual(
-      expect.objectContaining({
-        name: "uninstall",
-        status: "skipped",
-        detail: expect.stringContaining("Uninstall stopped at this failure"),
-      }),
-    );
-    await expect(readFile(state, "utf8")).resolves.toBe("{}\n");
+    expect(await readFile(client.configPath, "utf8")).not.toContain("rea");
+    await expect(readFile(cacheOwned)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   } finally {
     await cleanupHeldHandle(host, release);
   }
