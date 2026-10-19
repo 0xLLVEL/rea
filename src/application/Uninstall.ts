@@ -247,9 +247,16 @@ const hasOwnershipEvidence = async (
     let original: string;
     try {
       original = await fileSystem.readText(path);
-    } catch {
-      // Missing or unreadable storage proves nothing; keep scanning.
-      continue;
+    } catch (cause: unknown) {
+      // A close failure after a completed read still carries the exact text
+      // in its retained outcome, and that text is the ownership fact: only a
+      // read that never completed proves nothing. Preserve it, so later read
+      // failures stay blocking instead of softening to retained.
+      if (!(cause instanceof RegularFileCleanupFailure)) continue;
+      if (cause.outcome.kind !== "completed") continue;
+      const completed: unknown = cause.outcome.value;
+      if (typeof completed !== "string") continue;
+      original = completed;
     }
     let parsed: ClientConfigurationDocument;
     try {

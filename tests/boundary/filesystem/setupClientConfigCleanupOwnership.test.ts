@@ -29,7 +29,10 @@ import {
 import { RegularFileCleanupFailure } from "../../../src/application/RegularFileRead.js";
 import { configureDetectedClients } from "../../../src/application/SetupClients.js";
 import { configureClientConfiguration } from "../../../src/application/SetupClientConfiguration.js";
-import { systemUninstallHost } from "../../../src/application/Uninstall.js";
+import {
+  systemUninstallHost,
+  runUninstall,
+} from "../../../src/application/Uninstall.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -165,6 +168,58 @@ it("stops uninstall and retains the backup read owner when its close fails", asy
     expect(await readFile(path, "utf8")).toBe(configured);
     expect(closeAttempts).toHaveLength(2);
     await expectCloseReclaimsHandle(host, closeAttempts, release);
+  } finally {
+    await cleanupHeldHandle(host, release);
+  }
+});
+
+it("keeps shared-ownership proof when the ownership read completes but its close fails", async () => {
+  // FreeBuff without a profile marker leaves its shared storage applicability-
+  // unverified. The completed ownership read is the proof that later read
+  // failures are blocking; discarding it softens every failure to retained,
+  // so purge runs while the active shared registration remains.
+  const home = await createTestTempDirectory("rea-freebuff-ownership-close-");
+  const setupHost = systemSetupHost(
+    { platform: "linux", homeDirectory: home } as DoctorHost,
+    { HOME: home },
+  );
+  const client = (await setupHost.supportedClients()).find(
+    ({ name }) => name === "freebuff",
+  );
+  if (client === undefined) throw new Error("freebuff client missing");
+  await mkdir(dirname(client.configPath), { recursive: true });
+  await writeFile(
+    client.configPath,
+    JSON.stringify({ mcpServers: { other: { command: "other" } } }),
+  );
+  expect(
+    await configureClientConfiguration(client, {}, ["rea", "mcp"]),
+  ).toMatchObject({ status: "configured" });
+  const state = join(home, ".rea", "state.json");
+  await mkdir(dirname(state), { recursive: true });
+  await writeFile(state, "{}\n");
+  const { release } = holdReadHandle(
+    client.configPath,
+    "held ownership read handle",
+  );
+  const host = systemUninstallHost(home, undefined, { HOME: home }, "linux");
+  try {
+    const result = await runUninstall(true, host);
+    expect(result.status).toBe("failed");
+    expect(result.items).toContainEqual(
+      expect.objectContaining({ name: "freebuff", status: "failed" }),
+    );
+    expect(result.items).toContainEqual(
+      expect.objectContaining({
+        name: "uninstall",
+        status: "skipped",
+        detail: expect.stringContaining(
+          "No REA registration, skill, or data was removed",
+        ),
+      }),
+    );
+    // Data must not be purged while the shared registration is still active.
+    await expect(readFile(state, "utf8")).resolves.toBe("{}\n");
   } finally {
     await cleanupHeldHandle(host, release);
   }
