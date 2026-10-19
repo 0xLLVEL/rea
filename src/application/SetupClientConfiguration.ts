@@ -817,17 +817,24 @@ const clientConfigurationDesired = (
   };
 };
 
-/** Whether the row's `enable: false` binds this client's rewrite of the
- * storage. Shared registration doubles as ZCode's fallback, so the activation
- * fact belongs to every reader; a repair preserves it instead of silently
- * re-enabling a row it does not own. A client's own native storage has a
- * single reader, so an explicitly selected setup may still repair it. */
+/** Whether a rea setup repair for this target preserves the row's
+ * `enable: false` instead of dropping it. Shared registration doubles as
+ * ZCode's fallback, so the activation fact belongs to every reader; a repair
+ * preserves it instead of silently re-enabling a row it does not own. A
+ * client's own native storage has a single reader, so an explicitly selected
+ * setup may still repair it. Doctor's remediation reads this same rule so a
+ * preserved disable never points at an ineffective setup run. */
+export const setupPreservesDisabledActivation = (
+  client: Pick<SetupClient, "sharedRegistration">,
+  format: string | undefined,
+): boolean => client.sharedRegistration === true || format === "zcode_fallback";
+
 const preservesDisabledActivation = (
   client: SetupClient,
   format: string,
   previous: unknown,
 ): boolean =>
-  (client.sharedRegistration === true || format === "zcode_fallback") &&
+  setupPreservesDisabledActivation(client, format) &&
   typeof previous === "object" &&
   previous !== null &&
   Reflect.get(previous, "enable") === false;

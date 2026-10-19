@@ -451,7 +451,13 @@ describe("ZCode disabled registrations", () => {
           environment: {},
         })
       ).find(({ client }) => client === "zcode");
-    expect(await statusFor()).toMatchObject({ state: "stale" });
+    // Native ZCode storage has a single reader, so setup drops the flag
+    // and is the working repair; doctor must keep recommending it.
+    expect(await statusFor()).toMatchObject({
+      state: "stale",
+      remediation: expect.stringContaining("rea setup"),
+    });
+    expect((await statusFor())?.remediation).not.toContain("enable: false");
 
     expect(
       (await configureClientConfiguration(client, {}, command)).status,
@@ -529,6 +535,9 @@ describe("ZCode disabled registrations", () => {
       config_path: fallback,
       command,
       state: "stale",
+      // The fallback view of shared storage is preserved by setup, so its
+      // disable is the manual conflict rather than a setup repair.
+      remediation: expect.stringContaining("enable: false"),
     });
   });
 
