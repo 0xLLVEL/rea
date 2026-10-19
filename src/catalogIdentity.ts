@@ -65,8 +65,6 @@ const sortByName = (
     compareUnicodeCodePoints(left.name, right.name),
   );
 
-const promptCatalog = createPromptCatalog(PROMPT_CONTRACTS);
-
 const digest = (value: unknown): string => {
   const encoded = canonicalize(value);
   if (encoded === undefined)
@@ -107,6 +105,7 @@ export const createCatalogIdentity = (
   compactPresentation: CompactInputSchemaPresentation | undefined = undefined,
   contracts: readonly ToolContract[] = TOOL_CONTRACTS,
   outputSchemaProfile: McpOutputSchemaProfile = "full",
+  promptContracts: readonly PromptContract[] = PROMPT_CONTRACTS,
 ) => {
   const selectedPresentation =
     compactPresentation === undefined
@@ -119,19 +118,20 @@ export const createCatalogIdentity = (
   let catalogDigests: CatalogDigests | undefined =
     selectedPresentation === undefined &&
     outputSchemaProfile === "full" &&
-    contracts === TOOL_CONTRACTS
+    contracts === TOOL_CONTRACTS &&
+    promptContracts === PROMPT_CONTRACTS
       ? RECORDED_CATALOG_DIGESTS
       : undefined;
   return {
     counts: {
       cli_commands: CLI_COMMAND_NAMES.length,
       mcp_tools: contracts.length,
-      mcp_prompts: promptCatalog.length,
+      mcp_prompts: promptContracts.length,
     },
     get digests() {
       return (catalogDigests ??= createCatalogDigests(
         contracts,
-        PROMPT_CONTRACTS,
+        promptContracts,
         selectedPresentation,
         outputSchemaProfile,
       ));

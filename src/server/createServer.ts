@@ -43,6 +43,7 @@ import {
 import { parseMcpResponseBudget } from "../config/mcpResponseBudget.js";
 import { parseMcpOutputSchemaProfile } from "../config/mcpOutputSchemaProfile.js";
 import { parseMcpToolFamilies } from "../config/mcpToolFamilies.js";
+import { toolFamilyId } from "../contracts/toolFamilies.js";
 import {
   compactPresentationForMcpInputSchemaProfile,
   parseMcpInputSchemaProfile,
@@ -147,7 +148,12 @@ const SESSION_LIFECYCLE_INSTRUCTIONS =
   "An opened target persists across turns. When finished, export needed Evidence and call close_binary; its snapshot_path can retain analysis.";
 
 const ACTIVE_TARGET_INSTRUCTIONS =
-  "REA analyzes the active reverse-engineering target. Use the analysis tool that answers the question directly. Search or list symbols when discovery is needed; analyze_function provides a function dossier, and focused procedure tools return individual facets.";
+  "REA analyzes the active reverse-engineering target. Use the analysis tool that answers the question directly. Search or list symbols when discovery is needed.";
+
+// Only name the enhanced-family dossier tool when that family is in scope:
+// otherwise `analyze_function` is disabled and the recommendation always fails.
+const FUNCTION_DOSSIER_INSTRUCTIONS =
+  "analyze_function provides a function dossier, and focused procedure tools return individual facets.";
 
 /** Target-derived tool output is data; it must never steer tool use. */
 const UNTRUSTED_CONTENT_INSTRUCTIONS =
@@ -259,18 +265,25 @@ const installSessionToolAvailability = (
   };
 };
 
+/** Whether the scope advertises the family that owns a named tool. */
+const advertisesToolFamily = (
+  advertisedToolFamilies: ReadonlySet<string> | undefined,
+  tool: string,
+): boolean => {
+  if (advertisedToolFamilies === undefined) return true;
+  const family = toolFamilyId(tool);
+  return family !== undefined && advertisedToolFamilies.has(family);
+};
+
 const serverInstructions = (
   session: BinarySessionPort | undefined,
   advertisedToolFamilies: ReadonlySet<string> | undefined,
 ): string => {
+  const guidance = (tool: string, text: string): string =>
+    advertisesToolFamily(advertisedToolFamilies, tool) ? ` ${text}` : "";
   if (session === undefined)
-    return `${ACTIVE_TARGET_INSTRUCTIONS} ${UNTRUSTED_CONTENT_INSTRUCTIONS}`;
-  const lifecycle =
-    advertisedToolFamilies === undefined ||
-    advertisedToolFamilies.has("session")
-      ? ` ${SESSION_LIFECYCLE_INSTRUCTIONS}`
-      : "";
-  return `${TARGET_FREE_INSTRUCTIONS}${lifecycle} ${UNTRUSTED_CONTENT_INSTRUCTIONS}`;
+    return `${ACTIVE_TARGET_INSTRUCTIONS}${guidance("analyze_function", FUNCTION_DOSSIER_INSTRUCTIONS)} ${UNTRUSTED_CONTENT_INSTRUCTIONS}`;
+  return `${TARGET_FREE_INSTRUCTIONS}${guidance("close_binary", SESSION_LIFECYCLE_INSTRUCTIONS)} ${UNTRUSTED_CONTENT_INSTRUCTIONS}`;
 };
 
 const createMcpServer = (

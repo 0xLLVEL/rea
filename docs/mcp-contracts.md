@@ -858,9 +858,13 @@ whose tools the registration advertises; an operation omitted from those
 projections because of the scope is not callable through this registration,
 and `tools/list` remains the canonical catalog. Availability is derived from
 the complete provider facts before those sets are narrowed, so hiding a direct
-tool does not report an advertised composed tool as unavailable. The server
+tool does not report an advertised composed tool as unavailable. Guided
+prompts follow the scope too: a workflow is advertised only when every tool in
+its suggested steps belongs to a selected family, so a partially available
+workflow is omitted from `prompts/list` instead of rendering a disabled call;
+`prompts/get` reports it as not found. The server
 identity digest and
-`rea mcp doctor` inventory derive from the
+`rea mcp doctor` tool and prompt inventory derive from the
 same selected scope, so a scoped server reports itself healthy; a scope
 without the `session` family cannot serve `binary_session`, and doctor says
 so explicitly instead of reporting a mismatch. Canonical server-side
