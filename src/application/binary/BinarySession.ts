@@ -591,12 +591,7 @@ export class BinarySession
   }
 
   /** Describe the active binary session. */
-  status(
-    options: {
-      readonly signal?: AbortSignal;
-      readonly isOperationAdvertised?: (operation: string) => boolean;
-    } = {},
-  ): Promise<JsonValue> {
+  status(options: { readonly signal?: AbortSignal } = {}): Promise<JsonValue> {
     const run = this.#active ?? this.#pendingCleanup?.run;
     const client = run?.client;
     return binarySessionStatus({
