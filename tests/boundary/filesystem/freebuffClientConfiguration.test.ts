@@ -164,6 +164,35 @@ describe("FreeBuff JSON registration", () => {
     ).toMatchObject({ state: "aligned", command });
   });
 
+  it("preserves a shared-row enable:false while repairing FreeBuff", async () => {
+    // The shared file doubles as ZCode's fallback: its `enable: false` binds
+    // every reader, so a FreeBuff repair must not silently re-enable the row
+    // it does not own. Doctor reports the disabled row as stale for FreeBuff;
+    // the repair rewrites the registration but keeps the activation fact.
+    const { client } = await freebuffClient();
+    await writeFile(
+      client.configPath,
+      JSON.stringify(
+        {
+          mcpServers: {
+            rea: { command: command[0], args: command.slice(1), enable: false },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    expect(["configured", "unchanged"]).toContain(
+      (await configureClientConfiguration(client, {}, command)).status,
+    );
+    const parsed = JSON.parse(await readFile(client.configPath, "utf8"));
+    expect(parsed.mcpServers.rea).toMatchObject({
+      command: command[0],
+      args: command.slice(1),
+      enable: false,
+    });
+  });
+
   it("creates the mcpServers table in an existing file without servers", async () => {
     const { client } = await freebuffClient();
     await writeFile(
@@ -283,13 +312,16 @@ describe("uninstall applicability for shared FreeBuff storage", () => {
     );
 
     expect(result.status).toBe("failed");
-    expect(result.items).toContainEqual(
-      expect.objectContaining({
-        name: "zcode",
-        status: "failed",
-        detail:
-          "Configuration could not be read. Check file permissions, then rerun uninstall.",
-      }),
+    const zcodeItem = result.items.find(({ name }) => name === "zcode");
+    expect(zcodeItem).toMatchObject({ status: "failed" });
+    // The denied product-local read stays blocking, and the shared fallback
+    // is now inspected fail-closed too, so its malformed data is reported
+    // beside the denied read in the same collapsed item.
+    expect(zcodeItem?.detail).toContain(
+      "Configuration could not be read. Check file permissions, then rerun uninstall.",
+    );
+    expect(zcodeItem?.detail).toContain(
+      "Configuration is not valid JSON and was not changed. Repair it, then rerun uninstall.",
     );
   });
 
