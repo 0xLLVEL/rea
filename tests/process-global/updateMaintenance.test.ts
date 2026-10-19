@@ -158,9 +158,11 @@ describe("maintenance activation and layered configuration", () => {
       }),
     );
 
+    // The fallback row is also FreeBuff's registration, and FreeBuff is the
+    // setup action that rewrites it, so both views stay in maintenance scope.
     await expect(
       existingMaintenanceScope(home, entryPoint, process.env),
-    ).resolves.toMatchObject({ clients: ["zcode"] });
+    ).resolves.toMatchObject({ clients: ["freebuff", "zcode"] });
   });
 
   it("selects an enabled registration inherited through layered OpenCode files", async () => {
@@ -353,6 +355,30 @@ describe("shared registration maintenance", () => {
       skill: false,
       skillDestinations: [],
     });
+  });
+
+  it("retains FreeBuff when ZCode reads the shared fallback", async () => {
+    // Both products load the one shared row, but their setup actions write
+    // different files: ZCode writes ~/.zcode/cli/config.json and deliberately
+    // leaves ~/.agents/mcp.json untouched (docs/client-configuration.md), so
+    // its fallback view cannot cover FreeBuff's registration. The shared row
+    // would stay pinned to the old version without FreeBuff's own action.
+    await writeClient("zcode", JSON.stringify({ mcp: { servers: {} } }));
+    await mkdir(join(home, ".config", "freebuff-desktop"), {
+      recursive: true,
+    });
+    await writeClient(
+      "freebuff",
+      JSON.stringify({
+        mcpServers: {
+          rea: { command: "npx", args: ["-y", "rea-agents@0.1.0", "mcp"] },
+        },
+      }),
+    );
+
+    await expect(
+      existingMaintenanceScope(home, entryPoint, process.env),
+    ).resolves.toMatchObject({ clients: ["freebuff", "zcode"] });
   });
 
   it("leaves a foreign shared registration out of maintenance", async () => {

@@ -3,7 +3,6 @@ import { RegularFileCleanupFailure } from "./RegularFileRead.js";
 
 import { classifyClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
 import { readClientRegistrationInspections } from "./ClientRegistrationStatus.js";
-import { supportedClients } from "./SupportedClients.js";
 import { existingSkillDestinations } from "./SetupSkill.js";
 import type { SetupAction } from "./SetupTypes.js";
 import type { Result } from "../domain/result.js";
@@ -77,32 +76,14 @@ export const existingMaintenanceScope = async (
       continue;
     clients.push(registration.client);
   }
-  // One shared file is one maintenance decision: a shared-registration client
-  // defers to another selected client covering the same file, so the owned
-  // row is refreshed once through the applicable product instead of twice
-  // through two views of the same registration.
-  const shared = new Map(
-    supportedClients(home, process.platform, environment).map((client) => [
-      client.name,
-      client.sharedRegistration === true,
-    ]),
-  );
-  const covered = new Set(
-    registrations
-      .filter(
-        ({ status }) =>
-          clients.includes(status.client) && shared.get(status.client) !== true,
-      )
-      .map(({ status }) => status.config_path),
-  );
-  const deduped = clients.filter(
-    (client) =>
-      shared.get(client) !== true ||
-      !registrations.some(
-        ({ status }) =>
-          status.client === client && covered.has(status.config_path),
-      ),
-  );
+  // Each setup action rewrites only that client's own configuration path, so
+  // maintenance keeps every selected client instead of deferring one view of
+  // a registration to another client's inspection: ZCode writes
+  // ~/.zcode/cli/config.json and deliberately leaves the ~/.agents/mcp.json
+  // fallback untouched (docs/client-configuration.md), while FreeBuff writes
+  // the shared file itself. Dropping FreeBuff because ZCode reads that
+  // fallback would leave the row both products load pinned to the old
+  // version.
   const skillDestinations = await existingSkillDestinations(
     home,
     environment,
@@ -110,7 +91,7 @@ export const existingMaintenanceScope = async (
     resources,
   );
   return {
-    clients: deduped,
+    clients,
     skill: skillDestinations.length > 0,
     skillDestinations,
   };
