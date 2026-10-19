@@ -314,4 +314,55 @@ describe("uninstall applicability for shared FreeBuff storage", () => {
       JSON.parse(await readFile(client.configPath, "utf8")).mcpServers,
     ).toEqual({ other: { command: "other-server" } });
   });
+
+  it("keeps an unresolved profile probe from softening shared failures", async () => {
+    // A denied profile probe is not absence: when the shared file also
+    // cannot be read, uninstall must block instead of treating applicability
+    // as unproven and purging data while an installed FreeBuff may still hold
+    // an active REA registration.
+    const home = await createTestTempDirectory("rea-freebuff-denied-probe-");
+    const client = freebuffPath(home, process.platform)!;
+    const profile = client.discoveryPaths?.[0];
+    if (profile === undefined)
+      throw new Error("freebuff discovery path missing");
+    await mkdir(profile, { recursive: true });
+    await configureClientConfiguration(client, {}, command);
+    const state = join(home, ".rea", "state.json");
+    await mkdir(dirname(state), { recursive: true });
+    await writeFile(state, "{}\n");
+    const denied = () => Object.assign(new Error("denied"), { code: "EACCES" });
+    const fileSystem: UninstallFileSystem = {
+      readText: (path) =>
+        path === client.configPath
+          ? Promise.reject(denied())
+          : readFile(path, "utf8"),
+      copy: (source, destination) =>
+        copyFile(source, destination, fsConstants.COPYFILE_EXCL),
+      publishConfiguration: (path, contents, original) =>
+        ClientConfigurationPublication.write(path, contents, original),
+      stat: (path) =>
+        path === profile ? Promise.reject(denied()) : lstat(path),
+      remove: (path) => rm(path, { recursive: true }),
+    };
+
+    const result = await runUninstall(
+      true,
+      systemUninstallHost(home, fileSystem),
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.items).toContainEqual(
+      expect.objectContaining({ name: "freebuff", status: "failed" }),
+    );
+    expect(result.items).toContainEqual(
+      expect.objectContaining({
+        name: "uninstall",
+        status: "skipped",
+        detail: expect.stringContaining(
+          "No REA registration, skill, or data was removed",
+        ),
+      }),
+    );
+    await expect(readFile(state, "utf8")).resolves.toBe("{}\n");
+  });
 });

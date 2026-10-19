@@ -305,26 +305,33 @@ export const systemUninstallHost = (
       const clients: UninstallClient[] = [];
       for (const client of supported) {
         // Shared configuration alone cannot establish product applicability.
-        // Missing or unreadable evidence stays unverified; owned rows in a
-        // readable configuration can still be removed independently.
+        // Definitive absence leaves the shared paths unverified while owned
+        // rows in a readable configuration can still be removed
+        // independently; an unresolved probe is unknown, never absence.
         let applicable = client.discoveryPaths === undefined;
+        let unresolvedProbe = false;
         for (const path of client.discoveryPaths ?? []) {
           try {
             await fileSystem.stat(path);
             applicable = true;
             break;
-          } catch {
-            // Keep the client unverified until one discovery path exists.
+          } catch (cause: unknown) {
+            // Absence keeps scanning until one discovery path exists; any
+            // other probe failure leaves applicability unresolved.
+            if (!isMissing(cause)) unresolvedProbe = true;
           }
         }
-        // Unproven applicability may only soften failures for storage REA does
-        // not own. A denied product-local path means an unknown registration
-        // state, which must stop uninstall instead of reporting success.
+        // Only definitive absence may soften failures for storage REA does not
+        // own: a denied or failed probe leaves applicability unresolved, and
+        // unresolved applicability must not downgrade shared-config failures
+        // to retained. A denied product-local path means an unknown
+        // registration state, which must stop uninstall instead of reporting
+        // success.
         const sharedPaths = clientSharedRegistrationPaths(client);
         const applicabilityFor = (
           configPath: string,
         ): Pick<UninstallClient, "applicability"> =>
-          applicable || !sharedPaths.has(configPath)
+          applicable || unresolvedProbe || !sharedPaths.has(configPath)
             ? {}
             : { applicability: "unverified" };
         for (const configPath of uninstallConfigPaths(client))
