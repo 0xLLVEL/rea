@@ -1,4 +1,5 @@
 import {
+  lstat as fsLstat,
   mkdir,
   open as fsOpen,
   readFile,
@@ -37,10 +38,11 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...actual, open: vi.fn(actual.open) };
+  return { ...actual, open: vi.fn(actual.open), lstat: vi.fn(actual.lstat) };
 });
 
 const openMock = vi.mocked(fsOpen);
+const lstatMock = vi.mocked(fsLstat);
 let actualFs: typeof import("node:fs/promises");
 
 beforeEach(async () => {
@@ -49,9 +51,13 @@ beforeEach(async () => {
       "node:fs/promises",
     );
   openMock.mockImplementation((...args) => actualFs.open(...args));
+  lstatMock.mockImplementation((...args) => actualFs.lstat(...args));
 });
 
-afterEach(() => openMock.mockReset());
+afterEach(() => {
+  openMock.mockReset();
+  lstatMock.mockReset();
+});
 
 const holdReadHandle = (path: string, reason: string, initiallyHeld = true) => {
   const closeAttempts: FileHandle[] = [];
@@ -334,6 +340,58 @@ it("stops removal when a completed reread leaves its handle unreleased", async (
     await expect(readFile(state, "utf8")).resolves.toBe("{}\n");
   } finally {
     await cleanupHeldHandle(host, release);
+  }
+});
+
+it("keeps the ZCode fallback row when its profile probe is unresolved", async () => {
+  // A denied profile probe leaves ZCode's applicability unresolved, never
+  // absent: the shared fallback must stay in ZCode's scope so its row is
+  // inspected and removed, fail-closed, instead of leaving an installed
+  // ZCode wired to purged data. Definitive absence still keeps ZCode out of
+  // another product's primary storage.
+  const home = await createTestTempDirectory("rea-zcode-fallback-unresolved-");
+  const fallback = join(home, ".agents", "mcp.json");
+  const profile = join(home, ".zcode", "cli");
+  lstatMock.mockImplementation((path) =>
+    String(path) === profile
+      ? Promise.reject(
+          Object.assign(new Error("EACCES: permission denied, lstat"), {
+            code: "EACCES",
+          }),
+        )
+      : actualFs.lstat(path),
+  );
+  const unresolved = systemUninstallHost(
+    home,
+    undefined,
+    { HOME: home },
+    "linux",
+  );
+  try {
+    const clients = await unresolved.clients();
+    const row = clients.find(
+      (candidate) =>
+        candidate.name === "zcode" && candidate.configPath === fallback,
+    );
+    expect(row).toMatchObject({ format: "zcode_fallback" });
+    // Fail-closed: the unresolved row carries no unverified softening, so a
+    // failed read blocks removal instead of retaining around the purge.
+    expect(row?.applicability).toBeUndefined();
+  } finally {
+    await unresolved.close?.();
+  }
+  lstatMock.mockImplementation((...args) => actualFs.lstat(...args));
+  const absent = systemUninstallHost(home, undefined, { HOME: home }, "linux");
+  try {
+    const clients = await absent.clients();
+    expect(
+      clients.some(
+        (candidate) =>
+          candidate.name === "zcode" && candidate.format === "zcode_fallback",
+      ),
+    ).toBe(false);
+  } finally {
+    await absent.close?.();
   }
 });
 

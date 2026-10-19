@@ -352,14 +352,19 @@ export const systemUninstallHost = (
             ...client,
             configPath,
             ...applicabilityFor(configPath),
-          });
-        // ZCode's fallback is another product's primary storage, so ZCode may
-        // only act on it once its own profile directory proves it is installed.
-        if (applicable && client.zcodeFallbackPath !== undefined)
+          }); // ZCode's fallback is another product's primary storage, so ZCode may
+        // only act on it once its own profile directory proves it is
+        // installed; a denied or failed probe is unresolved, never absence,
+        // so it keeps the fallback in scope for fail-closed inspection.
+        if (
+          (applicable || unresolvedProbe) &&
+          client.zcodeFallbackPath !== undefined
+        )
           clients.push({
             ...client,
             configPath: client.zcodeFallbackPath,
             format: "zcode_fallback" as const,
+            ...applicabilityFor(client.zcodeFallbackPath),
           });
         // Shared storage is inspected once and the decision is reported once.
         // See ClientRegistrationStatus.sharedRegistration for the ownership model.
