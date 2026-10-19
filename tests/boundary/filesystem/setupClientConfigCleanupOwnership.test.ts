@@ -277,6 +277,66 @@ it("keeps shared-ownership proof when removal refuses a shadowed duplicate", asy
   }
 });
 
+it("stops removal when a completed reread leaves its handle unreleased", async () => {
+  // Greptile P1: preflight and reread both complete with a foreign-only row,
+  // but the reread handle cannot be closed even by the cleanup retry. REA
+  // still owns that open handle, so removal must stop before purge: serving
+  // the completed text would let removeAll delete managed data while the
+  // incomplete cleanup is only reported later, by close().
+  const home = await createTestTempDirectory("rea-freebuff-reread-leak-");
+  const setupHost = systemSetupHost(
+    { platform: "linux", homeDirectory: home } as DoctorHost,
+    { HOME: home },
+  );
+  const client = (await setupHost.supportedClients()).find(
+    ({ name }) => name === "freebuff",
+  );
+  if (client === undefined) throw new Error("freebuff client missing");
+  await mkdir(dirname(client.configPath), { recursive: true });
+  await writeFile(
+    client.configPath,
+    '{"mcpServers":{"rea":{"command":"foreign-server","args":[]}}}',
+  );
+  const state = join(home, ".rea", "state.json");
+  await mkdir(dirname(state), { recursive: true });
+  await writeFile(state, "{}\n");
+  const { hold, release } = holdReadHandle(
+    client.configPath,
+    "held removal reread handle",
+    false,
+  );
+  const base = systemUninstallHost(home, undefined, { HOME: home }, "linux");
+  const host = {
+    ...base,
+    inspectSkill: async () => {
+      hold();
+      return base.inspectSkill?.();
+    },
+  };
+  try {
+    const result = await runUninstall(true, host);
+    expect(result.status).toBe("failed");
+    expect(result.items).toContainEqual(
+      expect.objectContaining({
+        name: "freebuff",
+        status: "failed",
+        detail: expect.stringContaining("its resources could not be released"),
+      }),
+    );
+    expect(result.items).toContainEqual(
+      expect.objectContaining({
+        name: "uninstall",
+        status: "skipped",
+        detail: expect.stringContaining("Uninstall stopped at this failure"),
+      }),
+    );
+    // Managed data must survive an unreleased read handle.
+    await expect(readFile(state, "utf8")).resolves.toBe("{}\n");
+  } finally {
+    await cleanupHeldHandle(host, release);
+  }
+});
+
 it("serves a completed removal reread when its handle repeatedly fails to close", async () => {
   // Preflight saw no owned row; another writer adds one before removal. The
   // reread completes but its handle never closes: the completed text must

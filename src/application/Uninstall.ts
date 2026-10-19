@@ -510,14 +510,18 @@ const readClientConfigurationText = async (
         cause,
         io.resources,
       );
+      const detail =
+        cleanup.primary instanceof InvalidUtf8FileError
+          ? "Configuration is not valid UTF-8 and was not changed; its resources could not be released. Repair it, then rerun uninstall."
+          : "Configuration could not be read or its resources could not be released. Check file permissions, then rerun uninstall.";
+      // An unreleased handle is REA's own incomplete cleanup, never foreign-
+      // storage uncertainty: it must stop removal outright, so later removals
+      // and purge cannot outrun the failure that close() reports afterwards.
+      if (cleanup.cleanup !== undefined)
+        return itemRead(item(client.name, "failed", detail));
       const completed: unknown =
         cause.outcome.kind === "completed" ? cause.outcome.value : undefined;
-      if (typeof completed !== "string")
-        return io.configurationFailure(
-          cleanup.primary instanceof InvalidUtf8FileError
-            ? "Configuration is not valid UTF-8 and was not changed; its resources could not be released. Repair it, then rerun uninstall."
-            : "Configuration could not be read or its resources could not be released. Check file permissions, then rerun uninstall.",
-        );
+      if (typeof completed !== "string") return io.configurationFailure(detail);
       return completed;
     }
     return isMissing(cause)
