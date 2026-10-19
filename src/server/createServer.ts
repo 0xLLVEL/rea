@@ -138,7 +138,13 @@ import { RizinDebugSessionManager } from "../rizin/RizinDebugSessionManager.js";
 import { registerRizinDebugTools } from "./registerRizinDebugTools.js";
 
 const TARGET_FREE_INSTRUCTIONS =
-  "REA provides reverse-engineering tools for local artifacts, native binaries, managed code, browser pages, and runtimes. Use the tool that directly answers the question; discover targets or inspect inventory only when needed. Tool results include inline Evidence and report their coverage and limitations. An opened target persists across turns. When finished, export needed Evidence and call close_binary; its snapshot_path can retain analysis.";
+  "REA provides reverse-engineering tools for local artifacts, native binaries, managed code, browser pages, and runtimes. Use the tool that directly answers the question; discover targets or inspect inventory only when needed. Tool results include inline Evidence and report their coverage and limitations.";
+
+// Only advertise the lifecycle when `session` is in scope: otherwise
+// `open_binary` and `close_binary` are disabled and the guidance would direct
+// initialization to a call that always fails.
+const SESSION_LIFECYCLE_INSTRUCTIONS =
+  "An opened target persists across turns. When finished, export needed Evidence and call close_binary; its snapshot_path can retain analysis.";
 
 const ACTIVE_TARGET_INSTRUCTIONS =
   "REA analyzes the active reverse-engineering target. Use the analysis tool that answers the question directly. Search or list symbols when discovery is needed; analyze_function provides a function dossier, and focused procedure tools return individual facets.";
@@ -253,6 +259,20 @@ const installSessionToolAvailability = (
   };
 };
 
+const serverInstructions = (
+  session: BinarySessionPort | undefined,
+  advertisedToolFamilies: ReadonlySet<string> | undefined,
+): string => {
+  if (session === undefined)
+    return `${ACTIVE_TARGET_INSTRUCTIONS} ${UNTRUSTED_CONTENT_INSTRUCTIONS}`;
+  const lifecycle =
+    advertisedToolFamilies === undefined ||
+    advertisedToolFamilies.has("session")
+      ? ` ${SESSION_LIFECYCLE_INSTRUCTIONS}`
+      : "";
+  return `${TARGET_FREE_INSTRUCTIONS}${lifecycle} ${UNTRUSTED_CONTENT_INSTRUCTIONS}`;
+};
+
 const createMcpServer = (
   session: BinarySessionPort | undefined,
   delivery: ToolResultDelivery,
@@ -267,11 +287,7 @@ const createMcpServer = (
     },
     {
       capabilities: {},
-      instructions: `${
-        session === undefined
-          ? ACTIVE_TARGET_INSTRUCTIONS
-          : TARGET_FREE_INSTRUCTIONS
-      } ${UNTRUSTED_CONTENT_INSTRUCTIONS}`,
+      instructions: serverInstructions(session, advertisedToolFamilies),
     },
     session === undefined
       ? undefined
