@@ -53,22 +53,26 @@ beforeEach(async () => {
 
 afterEach(() => openMock.mockReset());
 
-const holdReadHandle = (path: string, reason: string) => {
+const holdReadHandle = (path: string, reason: string, initiallyHeld = true) => {
   const closeAttempts: FileHandle[] = [];
   let released = false;
+  let held = initiallyHeld;
   openMock.mockImplementation(async (...args) => {
     const handle = await actualFs.open(...args);
     if (String(args[0]) !== path) return handle;
     const nativeClose = handle.close.bind(handle);
     vi.spyOn(handle, "close").mockImplementation(async () => {
       closeAttempts.push(handle);
-      if (!released) throw new Error(reason);
+      if (held && !released) throw new Error(reason);
       await nativeClose();
     });
     return handle;
   });
   return {
     closeAttempts,
+    hold: () => {
+      held = true;
+    },
     release: () => {
       released = true;
     },
@@ -265,6 +269,65 @@ it("keeps shared-ownership proof when removal refuses a shadowed duplicate", asy
         detail: expect.stringContaining(
           "No REA registration, skill, or data was removed",
         ),
+      }),
+    );
+    await expect(readFile(state, "utf8")).resolves.toBe("{}\n");
+  } finally {
+    await cleanupHeldHandle(host, release);
+  }
+});
+
+it("serves a completed removal reread when its handle repeatedly fails to close", async () => {
+  // Preflight saw no owned row; another writer adds one before removal. The
+  // reread completes but its handle never closes: the completed text must
+  // still drive removal instead of softening to retained and purging data
+  // around the newly active registration.
+  const home = await createTestTempDirectory("rea-freebuff-reread-close-");
+  const setupHost = systemSetupHost(
+    { platform: "linux", homeDirectory: home } as DoctorHost,
+    { HOME: home },
+  );
+  const client = (await setupHost.supportedClients()).find(
+    ({ name }) => name === "freebuff",
+  );
+  if (client === undefined) throw new Error("freebuff client missing");
+  await mkdir(dirname(client.configPath), { recursive: true });
+  await writeFile(
+    client.configPath,
+    '{"mcpServers":{"rea":{"command":"foreign-server","args":[]}}}',
+  );
+  const state = join(home, ".rea", "state.json");
+  await mkdir(dirname(state), { recursive: true });
+  await writeFile(state, "{}\n");
+  const { hold, release } = holdReadHandle(
+    client.configPath,
+    "held removal reread handle",
+    false,
+  );
+  const base = systemUninstallHost(home, undefined, { HOME: home }, "linux");
+  const host = {
+    ...base,
+    inspectSkill: async () => {
+      // Another writer registers REA between preflight and removal.
+      await writeFile(
+        client.configPath,
+        '{"mcpServers":{"rea":{"command":"rea","args":["mcp"]}}}',
+      );
+      hold();
+      return base.inspectSkill?.();
+    },
+  };
+  try {
+    const result = await runUninstall(true, host);
+    expect(result.status).toBe("failed");
+    expect(result.items).toContainEqual(
+      expect.objectContaining({ name: "freebuff", status: "failed" }),
+    );
+    expect(result.items).toContainEqual(
+      expect.objectContaining({
+        name: "uninstall",
+        status: "skipped",
+        detail: expect.stringContaining("Uninstall stopped at this failure"),
       }),
     );
     await expect(readFile(state, "utf8")).resolves.toBe("{}\n");

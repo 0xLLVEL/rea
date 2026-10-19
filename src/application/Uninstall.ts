@@ -275,6 +275,30 @@ const hasOwnershipEvidence = async (
   return false;
 };
 
+/** A client's shared-storage applicability from its discovery paths: a hit
+ * proves installation, a miss leaves it unproven, and any other probe failure
+ * leaves it unresolved — never absence. */
+const discoveryApplicability = async (
+  discoveryPaths: readonly string[] | undefined,
+  fileSystem: UninstallFileSystem,
+): Promise<{ readonly applicable: boolean; readonly unresolved: boolean }> => {
+  if (discoveryPaths === undefined)
+    return { applicable: true, unresolved: false };
+  let applicable = false;
+  let unresolved = false;
+  for (const path of discoveryPaths) {
+    try {
+      await fileSystem.stat(path);
+      return { applicable: true, unresolved: false };
+    } catch (cause: unknown) {
+      // Absence keeps scanning until one discovery path exists; any
+      // other probe failure leaves applicability unresolved.
+      if (!isMissing(cause)) unresolved = true;
+    }
+  }
+  return { applicable, unresolved };
+};
+
 /** Create uninstall effects contained to detected client configs and REA-owned paths. */
 export const systemUninstallHost = (
   selectedHome: string | undefined = undefined,
@@ -308,19 +332,8 @@ export const systemUninstallHost = (
         // Definitive absence leaves the shared paths unverified while owned
         // rows in a readable configuration can still be removed
         // independently; an unresolved probe is unknown, never absence.
-        let applicable = client.discoveryPaths === undefined;
-        let unresolvedProbe = false;
-        for (const path of client.discoveryPaths ?? []) {
-          try {
-            await fileSystem.stat(path);
-            applicable = true;
-            break;
-          } catch (cause: unknown) {
-            // Absence keeps scanning until one discovery path exists; any
-            // other probe failure leaves applicability unresolved.
-            if (!isMissing(cause)) unresolvedProbe = true;
-          }
-        }
+        const { applicable, unresolved: unresolvedProbe } =
+          await discoveryApplicability(client.discoveryPaths, fileSystem);
         // Only definitive absence may soften failures for storage REA does not
         // own: a denied or failed probe leaves applicability unresolved, and
         // unresolved applicability must not downgrade shared-config failures
@@ -476,6 +489,47 @@ type ClientConfigurationRead =
       readonly parsed: ClientConfigurationDocument;
     };
 
+/** The configuration text, or the outcome to report for a failed read. A
+ * completed physical read is retained even when its handle fails to close:
+ * that exact text still drives removal, so an owned row it proves stays
+ * actionable instead of softening to retained. */
+const readClientConfigurationText = async (
+  client: UninstallClient,
+  transactionPath: string,
+  io: {
+    readonly fileSystem: UninstallFileSystem;
+    readonly resources: ArtifactResourceScope;
+    readonly configurationFailure: (detail: string) => ClientConfigurationRead;
+  },
+): Promise<string | ClientConfigurationRead> => {
+  try {
+    return await io.fileSystem.readText(transactionPath);
+  } catch (cause: unknown) {
+    if (isClientConfigurationCleanupFailure(cause)) {
+      const cleanup = await retryClientConfigurationCleanup(
+        cause,
+        io.resources,
+      );
+      const completed: unknown =
+        cause.outcome.kind === "completed" ? cause.outcome.value : undefined;
+      if (typeof completed !== "string")
+        return io.configurationFailure(
+          cleanup.primary instanceof InvalidUtf8FileError
+            ? "Configuration is not valid UTF-8 and was not changed; its resources could not be released. Repair it, then rerun uninstall."
+            : "Configuration could not be read or its resources could not be released. Check file permissions, then rerun uninstall.",
+        );
+      return completed;
+    }
+    return isMissing(cause)
+      ? itemRead(item(client.name, "skipped", "Configuration does not exist."))
+      : io.configurationFailure(
+          cause instanceof InvalidUtf8FileError
+            ? "Configuration is not valid UTF-8 and was not changed. Repair it, then rerun uninstall."
+            : "Configuration could not be read. Check file permissions, then rerun uninstall.",
+        );
+  }
+};
+
 const readClientConfiguration = async (
   client: UninstallClient,
   fileSystem: UninstallFileSystem,
@@ -511,26 +565,12 @@ const readClientConfiguration = async (
       ? configurationFailure(resolved.detail)
       : itemRead(resolved);
   const transactionPath = resolved;
-  let original: string;
-  try {
-    original = await fileSystem.readText(transactionPath);
-  } catch (cause: unknown) {
-    if (isClientConfigurationCleanupFailure(cause)) {
-      const cleanup = await retryClientConfigurationCleanup(cause, resources);
-      return configurationFailure(
-        cleanup.primary instanceof InvalidUtf8FileError
-          ? "Configuration is not valid UTF-8 and was not changed; its resources could not be released. Repair it, then rerun uninstall."
-          : "Configuration could not be read or its resources could not be released. Check file permissions, then rerun uninstall.",
-      );
-    }
-    return isMissing(cause)
-      ? itemRead(item(client.name, "skipped", "Configuration does not exist."))
-      : configurationFailure(
-          cause instanceof InvalidUtf8FileError
-            ? "Configuration is not valid UTF-8 and was not changed. Repair it, then rerun uninstall."
-            : "Configuration could not be read. Check file permissions, then rerun uninstall.",
-        );
-  }
+  const original = await readClientConfigurationText(client, transactionPath, {
+    fileSystem,
+    resources,
+    configurationFailure,
+  });
+  if (typeof original !== "string") return original;
   try {
     const parsed = parseClientConfiguration(original, client.format);
     return { kind: "configuration", transactionPath, original, parsed };
