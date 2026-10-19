@@ -333,7 +333,11 @@ export const readClientRegistrationInspections = async (
               ? packageVersionRemediation(packageReference ?? "", client)
               : alignment === "unknown"
                 ? unknownEntryPointRemediation()
-                : undefined),
+                : undefined) ??
+            (activation === "disabled" &&
+            sharedEnableFlagBinds(registration, client, parsed)
+              ? sharedDisabledActivationRemediation()
+              : undefined),
           packageReference,
           registrationEnvironment?.ok === true
             ? timeoutAdvisory(
@@ -365,6 +369,25 @@ export const readClientRegistrationInspections = async (
   );
 };
 
+/** Shared registration storage doubles as ZCode's fallback, so its
+ * `enable: false` activation fact binds every reader of that storage.
+ * Maintenance must not drop the flag by rewriting the row as another
+ * product's registration and silently re-enabling it. */
+const sharedEnableFlagBinds = (
+  registration: z.output<typeof registrationSchema>,
+  client: SetupClient,
+  parsed: ClientConfigurationDocument,
+): boolean =>
+  (parsed.dialect === "zcode" ||
+    parsed.dialect === "zcode_fallback" ||
+    client.sharedRegistration === true) &&
+  registration.enable === false;
+
+/** A preserved shared disable is a manual conflict: setup preserves the
+ * flag, so its remediation must not point at an ineffective setup run. */
+const sharedDisabledActivationRemediation = (): string =>
+  "This shared registration row carries enable: false, which binds every reader of the shared storage, including ZCode's fallback view. REA preserves that flag, so rea setup will not change this row. Re-enable it with the product that disabled it, or remove enable: false manually, then rerun rea doctor.";
+
 const registrationActivation = (
   registration: z.output<typeof registrationSchema>,
   client: SetupClient,
@@ -373,14 +396,7 @@ const registrationActivation = (
   (client.format !== "grok" && registration.disabled === true) ||
   (registration.enabled === false &&
     !clientServerForcedEnabled(parsed, PRODUCT_IDENTITY.mcpServerKey)) ||
-  // Shared registration storage doubles as ZCode's fallback, so its
-  // `enable: false` activation fact binds every reader of that storage.
-  // Maintenance must not drop the flag by rewriting the row as another
-  // product's registration and silently re-enabling it.
-  ((parsed.dialect === "zcode" ||
-    parsed.dialect === "zcode_fallback" ||
-    client.sharedRegistration === true) &&
-    registration.enable === false) ||
+  sharedEnableFlagBinds(registration, client, parsed) ||
   clientServerListedDisabled(parsed, PRODUCT_IDENTITY.mcpServerKey)
     ? "disabled"
     : "enabled";

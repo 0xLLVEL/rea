@@ -193,6 +193,38 @@ describe("FreeBuff JSON registration", () => {
     });
   });
 
+  it("reports a preserved shared disable as a manual conflict, not a setup repair", async () => {
+    // The shared row's `enable: false` survives repair, so a stale doctor
+    // result must not point at an endlessly ineffective setup run: the
+    // remediation names the manual conflict instead.
+    const { home, client } = await freebuffClient();
+    await writeFile(
+      client.configPath,
+      JSON.stringify(
+        {
+          mcpServers: {
+            rea: { command: command[0], args: command.slice(1), enable: false },
+          },
+        },
+        null,
+        2,
+      ),
+    );
+    const status = (
+      await readClientRegistrationStatuses(home, undefined, {
+        platform: process.platform,
+        environment: {},
+      })
+    ).find(({ client }) => client === "freebuff");
+    expect(status).toMatchObject({ state: "stale" });
+    expect(status?.remediation).toEqual(
+      expect.stringContaining("enable: false"),
+    );
+    expect(status?.remediation).toEqual(
+      expect.stringContaining("will not change"),
+    );
+  });
+
   it("creates the mcpServers table in an existing file without servers", async () => {
     const { client } = await freebuffClient();
     await writeFile(
