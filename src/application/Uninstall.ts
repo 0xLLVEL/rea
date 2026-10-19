@@ -266,9 +266,11 @@ const hasOwnershipEvidence = async (
       continue;
     }
     const removal = clientRegistrationRemoval(parsed, original, client);
-    if (!removal.ok) continue;
-    if (removal.value.removeNative || removal.value.legacyPath !== undefined)
-      return true;
+    // Refusing the edit never retracts the owned-row fact: an effective
+    // REA-owned row shadowed by a foreign duplicate still proves ownership,
+    // so later read failures stay blocking instead of softening to retained.
+    const owned = removal.ok ? removal.value : removal.error.owned;
+    if (owned.removeNative || owned.legacyPath !== undefined) return true;
   }
   return false;
 };
@@ -551,6 +553,8 @@ type RegistrationRemoval = {
 type RegistrationRemovalRefusal = {
   readonly kind: "shadowed_unowned_member" | "foreign_legacy_fallback";
   readonly detail: string;
+  /** The owned rows that motivated removal; refusing the edit keeps them. */
+  readonly owned: RegistrationRemoval;
 };
 
 const clientRegistrationRemoval = (
@@ -572,6 +576,10 @@ const clientRegistrationRemoval = (
   const removeLegacy =
     legacyPath !== undefined &&
     isOwnedRegistration(parsed.legacyServers[name], client);
+  const ownership: RegistrationRemoval = {
+    removeNative,
+    legacyPath: removeLegacy ? legacyPath : undefined,
+  };
   if (removeNative || removeLegacy) {
     const shadowed = shadowedClientServers(original, parsed, name);
     if (
@@ -587,17 +595,16 @@ const clientRegistrationRemoval = (
       return err({
         kind: "shadowed_unowned_member",
         detail: SHADOWED_UNOWNED_MEMBER_DETAIL,
+        owned: ownership,
       });
   }
   if (removeNative && legacyPath !== undefined && !removeLegacy)
     return err({
       kind: "foreign_legacy_fallback",
       detail: UNOWNED_LEGACY_FALLBACK_DETAIL,
+      owned: ownership,
     });
-  return ok({
-    removeNative,
-    legacyPath: removeLegacy ? legacyPath : undefined,
-  });
+  return ok(ownership);
 };
 
 const SHADOWED_UNOWNED_MEMBER_DETAIL = `Configuration repeats the "${PRODUCT_IDENTITY.mcpServerKey}" member, and an earlier duplicate is not REA-owned; removing the registration the client reads would activate an earlier duplicate, so no change was made. Remove the duplicate members manually, then rerun uninstall.`;

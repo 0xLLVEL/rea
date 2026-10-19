@@ -225,6 +225,54 @@ it("keeps shared-ownership proof when the ownership read completes but its close
   }
 });
 
+it("keeps shared-ownership proof when removal refuses a shadowed duplicate", async () => {
+  // The effective row is REA-owned while an earlier duplicate is foreign, so
+  // removal refuses the edit. That refusal must not erase ownership: without
+  // the positive row fact, recurring close failures soften to retained and
+  // purge runs while the owned row remains active.
+  const home = await createTestTempDirectory("rea-freebuff-shadowed-close-");
+  const setupHost = systemSetupHost(
+    { platform: "linux", homeDirectory: home } as DoctorHost,
+    { HOME: home },
+  );
+  const client = (await setupHost.supportedClients()).find(
+    ({ name }) => name === "freebuff",
+  );
+  if (client === undefined) throw new Error("freebuff client missing");
+  await mkdir(dirname(client.configPath), { recursive: true });
+  await writeFile(
+    client.configPath,
+    '{"mcpServers":{"rea":{"command":"foreign-server","args":[]},"rea":{"command":"rea","args":["mcp"]}}}',
+  );
+  const state = join(home, ".rea", "state.json");
+  await mkdir(dirname(state), { recursive: true });
+  await writeFile(state, "{}\n");
+  const { release } = holdReadHandle(
+    client.configPath,
+    "held ownership read handle",
+  );
+  const host = systemUninstallHost(home, undefined, { HOME: home }, "linux");
+  try {
+    const result = await runUninstall(true, host);
+    expect(result.status).toBe("failed");
+    expect(result.items).toContainEqual(
+      expect.objectContaining({ name: "freebuff", status: "failed" }),
+    );
+    expect(result.items).toContainEqual(
+      expect.objectContaining({
+        name: "uninstall",
+        status: "skipped",
+        detail: expect.stringContaining(
+          "No REA registration, skill, or data was removed",
+        ),
+      }),
+    );
+    await expect(readFile(state, "utf8")).resolves.toBe("{}\n");
+  } finally {
+    await cleanupHeldHandle(host, release);
+  }
+});
+
 describe("ZCode fallback cleanup ownership", () => {
   it.each(["preflight", "configure"])(
     "retains a failed ZCode fallback close during %s until host cleanup",
