@@ -143,6 +143,14 @@ export const providerCatalog = (sources) => {
       contracts: sources.goContracts.GO_TOOL_CONTRACTS,
     },
     {
+      identity: sources.il2cppProvider.IL2CPP_METADATA_PROVIDER_IDENTITY,
+      contracts: sources.il2cppContracts.IL2CPP_TOOL_CONTRACTS,
+    },
+    {
+      identity: sources.modelProvider.MODEL_ARTIFACT_PROVIDER_IDENTITY,
+      contracts: sources.modelContracts.MODEL_TOOL_CONTRACTS,
+    },
+    {
       identity: sources.rustProvider.RUST_BINARY_PROVIDER_IDENTITY,
       contracts: sources.rustContracts.RUST_TOOL_CONTRACTS,
     },
@@ -156,7 +164,10 @@ export const providerCatalog = (sources) => {
     },
     {
       identity: sources.artifactProviders.ARTIFACT_GRAPH_PROVIDER,
-      contracts: sources.artifactContracts.ARTIFACT_TOOL_CONTRACTS,
+      contracts: [
+        ...sources.artifactContracts.ARTIFACT_TOOL_CONTRACTS,
+        ...sources.desktopContracts.DESKTOP_APPLICATION_TOOL_CONTRACTS,
+      ],
     },
     {
       identity: sources.artifactProviders.MANAGED_STATIC_PROVIDER,

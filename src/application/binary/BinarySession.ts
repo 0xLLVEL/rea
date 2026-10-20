@@ -46,8 +46,9 @@ import {
   commitExecutionProfile,
   prepareSessionExecution,
 } from "./BinarySessionExecution.js";
-import { closeAnalysisClient } from "./AnalysisClientCleanup.js";
+import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { profilelessNativeDispatchProfile } from "./ProfilelessNativeWorkflowSnapshot.js";
 const OFFICIAL_OPERATIONS: ReadonlySet<string> = new Set(
   OFFICIAL_TOOL_CONTRACTS.map(({ name }) => name),
 );
@@ -64,6 +65,7 @@ interface SessionRun {
 interface SessionBinding extends SessionRun {
   readonly target: BinaryTarget;
   readonly profile: AnalysisProfileCommitment | null;
+  readonly profilelessWorkflowProfile?: AnalysisProfileCommitment;
   nativeSourceAdmitted: boolean;
 }
 
@@ -173,7 +175,12 @@ export class BinarySession
     operation?: AnalysisOperation,
   ): AnalysisProfileCommitment | undefined {
     const profile = this.#active?.profile;
-    if (profile === null || profile === undefined) return undefined;
+    if (profile === null || profile === undefined) {
+      if (operation !== "inspect_native_dispatch_metadata") return undefined;
+      return this.#active?.profilelessWorkflowProfile === undefined
+        ? undefined
+        : structuredClone(this.#active.profilelessWorkflowProfile);
+    }
     if (
       operation !== undefined &&
       this.providerIdentity(operation).id !== profile.provider.id
@@ -200,12 +207,15 @@ export class BinarySession
       current: this.#active,
       target,
       options,
-      fileCloseResources: this.fileCloseResourceOwner,
       stagedSnapshotMatches: (target, profile) =>
         this.matchesSnapshot(target, profile),
     }).then((resolved) =>
-      isAborted(options.signal)
-        ? err(new AnalysisCancelledError("open_binary"))
+      resolved.ok && isAborted(options.signal)
+        ? err(
+            new AnalysisCancelledError("open_binary", {
+              cause: options.signal?.reason,
+            }),
+          )
         : resolved,
     );
   }
@@ -225,7 +235,6 @@ export class BinarySession
           current: this.#active,
           path,
           options: admitted,
-          fileCloseResources: this.fileCloseResourceOwner,
           stagedSnapshotMatches: (target, profile) =>
             this.matchesSnapshot(target, profile),
         }),
@@ -335,7 +344,9 @@ export class BinarySession
       return err(
         await this.#restoreAfterFailedOpen(
           previous,
-          new AnalysisCancelledError("open_binary"),
+          new AnalysisCancelledError("open_binary", {
+            cause: options.signal?.reason,
+          }),
         ),
       );
     const runId = randomUUID();
@@ -356,9 +367,14 @@ export class BinarySession
         ),
       );
     }
+    const profilelessWorkflowProfile =
+      profile === null ? profilelessNativeDispatchProfile(route) : undefined;
     this.#active = {
       target,
       profile,
+      ...(profilelessWorkflowProfile === undefined
+        ? {}
+        : { profilelessWorkflowProfile }),
       ...run,
       nativeSourceAdmitted: false,
     };
@@ -503,11 +519,9 @@ export class BinarySession
     if (clearRecords) this.clearSessionRecords();
     this.#clearRuntimeAvailability();
     const fileResources = await this.closeWriteResources();
-    const hashResources = await this.closeFailedFileCloses();
     const candidateResources = await this.#providerRouter.closeOwnedResources();
     const resourceFailures = [
       ...(fileResources.ok ? [] : [fileResources.error]),
-      ...(hashResources.ok ? [] : [hashResources.error]),
       ...(candidateResources.ok ? [] : [candidateResources.error]),
     ];
     let resourceFailure = resourceFailures[0];
@@ -591,10 +605,11 @@ export class BinarySession
   }
 
   /** Describe the active binary session. */
-  status(): JsonValue {
+  status(options: { readonly signal?: AbortSignal } = {}): Promise<JsonValue> {
     const run = this.#active ?? this.#pendingCleanup?.run;
     const client = run?.client;
     return binarySessionStatus({
+      ...options,
       target: this.#active?.target,
       route: this.#currentRoute(),
       router: this.#providerRouter,
@@ -787,13 +802,14 @@ export class BinarySession
       );
       const recorded = this.recordEvidence(evidence);
       if (!recorded.ok) return recorded;
-      this.recordSnapshot({
-        target: active.target,
-        profile,
-        operation: name,
-        parameters: arguments_,
-        execution: execution.value,
-      });
+      if (execution.value.cachePolicy !== "live")
+        this.recordSnapshot({
+          target: active.target,
+          profile,
+          operation: name,
+          parameters: arguments_,
+          execution: execution.value,
+        });
     }
     return execution;
   }
@@ -926,6 +942,7 @@ export class BinarySession
     client: AnalysisClient,
     options: Pick<BinarySessionOpenOptions, "signal">,
   ): Promise<boolean> {
+    if (client.reuseReadiness?.() === "blocked") return false;
     const snapshot = client.operationHealthSnapshot?.();
     if (snapshot !== undefined)
       return snapshot.state === "idle" || snapshot.state === "busy";

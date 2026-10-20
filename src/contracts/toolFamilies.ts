@@ -13,6 +13,9 @@ import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "./reverseEngineeringToolCont
 import { GDB_TOOL_CONTRACTS } from "./gdbToolContracts.js";
 import { RIZIN_DEBUG_TOOL_CONTRACTS } from "./rizinDebugToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
+import { DESKTOP_APPLICATION_TOOL_CONTRACTS } from "./desktopApplicationToolContracts.js";
+import { IL2CPP_TOOL_CONTRACTS } from "./il2cpp/il2cppToolContracts.js";
+import { MODEL_TOOL_CONTRACTS } from "./model/modelToolContracts.js";
 import { MANAGED_TOOL_CONTRACTS } from "./managed/managedToolContracts.js";
 import { FIRMWARE_TOOL_CONTRACTS } from "./firmware/firmwareToolContracts.js";
 import { ANDROID_TOOL_CONTRACTS } from "./android/androidToolContracts.js";
@@ -72,8 +75,11 @@ export const TOOL_FAMILY_DEFINITIONS = [
     surface: "artifact-provider",
     contracts: [
       ...ARTIFACT_TOOL_CONTRACTS,
+      ...DESKTOP_APPLICATION_TOOL_CONTRACTS,
       ...EVM_TOOL_CONTRACTS,
       ...GO_TOOL_CONTRACTS,
+      ...IL2CPP_TOOL_CONTRACTS,
+      ...MODEL_TOOL_CONTRACTS,
       ...RUST_TOOL_CONTRACTS,
       ...WASM_TOOL_CONTRACTS,
       ...SQLITE_TOOL_CONTRACTS,

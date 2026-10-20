@@ -136,11 +136,15 @@ const runSetupWorkflow = async (
     options.installSkill === undefined;
   const interactiveSelection =
     confirm !== undefined && !options.structured && clientSelectionAllowed;
-  let selectedClientIds = options.allDetectedClients
-    ? discovery.detectedClientIds
-    : (options.clientIds ??
-      options.readinessScope?.clients ??
-      discovery.defaultClientIds);
+  let selectedClientIds = [
+    ...new Set(
+      options.allDetectedClients
+        ? discovery.detectedClientIds
+        : (options.clientIds ??
+            options.readinessScope?.clients ??
+            discovery.defaultClientIds),
+    ),
+  ];
   let selectedSkillClientIds =
     options.skillClientIds ??
     options.readinessScope?.skillClients ??
@@ -588,7 +592,9 @@ const summarizeDoctor = (report: DoctorReport): SetupDoctorSummary => ({
       ? ["hopper"]
       : []),
     ...(report.providerInspections ?? [])
-      .filter(({ available }) => available)
+      .filter(
+        ({ available, checks }) => available && checks.every(({ ok }) => ok),
+      )
       .map(({ id }) => id),
   ],
   ...(report.hopperPath === undefined ? {} : { hopperPath: report.hopperPath }),

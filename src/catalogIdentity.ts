@@ -17,7 +17,11 @@ import {
   type CompactInputSchemaPresentation,
 } from "./contracts/compactInputSchema.js";
 import type { McpOutputSchemaProfile } from "./config/mcpOutputSchemaProfile.js";
-import { RECORDED_CATALOG_DIGESTS } from "./recordedCatalogDigests.js";
+import {
+  COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
+  type McpInputSchemaProfile,
+} from "./config/mcpInputSchemaProfile.js";
+import { RECORDED_CATALOG_DIGEST_PROFILES } from "./recordedCatalogDigests.js";
 
 /**
  * Digested per-tool projection. Every contract field that changes what a
@@ -25,10 +29,7 @@ import { RECORDED_CATALOG_DIGESTS } from "./recordedCatalogDigests.js";
  * that predates the untrusted-content framing must not digest equal to one
  * that emits `_meta.provenance`, or a stale process would report aligned.
  */
-const createToolCatalog = (
-  contracts: readonly ToolContract[],
-  compactPresentation: CompactInputSchemaPresentation | undefined,
-) =>
+const createToolCatalog = (contracts: readonly ToolContract[]) =>
   contracts.map((contract) => ({
     name: contract.name,
     title: contract.title,
@@ -37,14 +38,25 @@ const createToolCatalog = (
     effects: { ...contract.effects },
     returns_target_content: contract.returnsTargetContent,
     annotations: contract.annotations,
-    input_schema: presentAdvertisedInputSchema(
-      advertisedInputJsonSchema(contract),
-      compactPresentation,
-    ),
+    input_schema: advertisedInputJsonSchema(contract),
     output_schema: toolOutputSchemaWithMetadata(contract)[
       "~standard"
     ].jsonSchema.output({ target: "draft-2020-12" }),
   }));
+
+const presentToolCatalog = (
+  catalog: ReturnType<typeof createToolCatalog>,
+  presentation: CompactInputSchemaPresentation | undefined,
+) =>
+  presentation === undefined
+    ? catalog
+    : catalog.map((tool) => ({
+        ...tool,
+        input_schema: presentAdvertisedInputSchema(
+          tool.input_schema,
+          presentation,
+        ),
+      }));
 
 const createPromptCatalog = (contracts: readonly PromptContract[]) =>
   contracts
@@ -74,22 +86,15 @@ const digest = (value: unknown): string => {
   return createHash("sha256").update(encoded).digest("hex");
 };
 
-/**
- * Catalog digests over the given tool contracts. Exported so tests can prove
- * which contract fields the identity covers; production uses
- * {@link CATALOG_IDENTITY}.
- */
-export const createCatalogDigests = (
-  contracts: readonly ToolContract[] = TOOL_CONTRACTS,
-  promptContracts: readonly PromptContract[] = PROMPT_CONTRACTS,
-  compactPresentation: CompactInputSchemaPresentation | undefined = undefined,
-  outputSchemaProfile: McpOutputSchemaProfile = "full",
+const digestCatalogs = (
+  catalog: ReturnType<typeof createToolCatalog>,
+  prompts: ReturnType<typeof createPromptCatalog>,
+  outputSchemaProfile: McpOutputSchemaProfile,
 ) => {
   const tools = {
     output_schema_profile: outputSchemaProfile,
-    catalog: createToolCatalog(sortByName(contracts), compactPresentation),
+    catalog,
   };
-  const prompts = createPromptCatalog(promptContracts);
   return {
     tools_sha256: digest(tools),
     prompts_sha256: digest(prompts),
@@ -101,27 +106,82 @@ export const createCatalogDigests = (
   } as const;
 };
 
-export type CatalogDigests = ReturnType<typeof createCatalogDigests>;
-
-export const createCatalogIdentity = (
-  compactPresentation: CompactInputSchemaPresentation | undefined = undefined,
+/**
+ * Catalog digests over the given tool contracts. Exported so tests can prove
+ * which contract fields the identity covers; production uses
+ * {@link CATALOG_IDENTITY}.
+ */
+export const createCatalogDigests = (
   contracts: readonly ToolContract[] = TOOL_CONTRACTS,
+  promptContracts: readonly PromptContract[] = PROMPT_CONTRACTS,
+  compactPresentation: CompactInputSchemaPresentation | undefined = undefined,
   outputSchemaProfile: McpOutputSchemaProfile = "full",
-) => {
+) =>
+  digestCatalogs(
+    presentToolCatalog(
+      createToolCatalog(sortByName(contracts)),
+      compactPresentation,
+    ),
+    createPromptCatalog(promptContracts),
+    outputSchemaProfile,
+  );
+
+export type CatalogDigests = ReturnType<typeof digestCatalogs>;
+export type CatalogDigestProfiles = Readonly<
+  Record<
+    McpInputSchemaProfile,
+    Readonly<Record<McpOutputSchemaProfile, CatalogDigests>>
+  >
+>;
+
+/** Build-time identities share schema conversion across the four supported profiles. */
+export const createCatalogDigestProfiles = (
+  contracts: readonly ToolContract[] = TOOL_CONTRACTS,
+  promptContracts: readonly PromptContract[] = PROMPT_CONTRACTS,
+): CatalogDigestProfiles => {
+  const full = createToolCatalog(sortByName(contracts));
+  const compact = presentToolCatalog(full, {
+    budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
+  });
+  const prompts = createPromptCatalog(promptContracts);
+  const outputProfiles = (catalog: typeof full) => ({
+    full: digestCatalogs(catalog, prompts, "full"),
+    off: digestCatalogs(catalog, prompts, "off"),
+  });
+  return { full: outputProfiles(full), compact: outputProfiles(compact) };
+};
+
+/** One catalog identity: advertised presentation, contract scope and output profile. */
+export interface CatalogIdentityOptions {
+  readonly compactPresentation?: CompactInputSchemaPresentation | undefined;
+  readonly contracts?: readonly ToolContract[] | undefined;
+  readonly outputSchemaProfile?: McpOutputSchemaProfile | undefined;
+}
+
+export const createCatalogIdentity = (options: CatalogIdentityOptions = {}) => {
+  const {
+    compactPresentation,
+    contracts = TOOL_CONTRACTS,
+    outputSchemaProfile = "full",
+  } = options;
   const selectedPresentation =
     compactPresentation === undefined
       ? undefined
       : { budgetBytes: compactPresentation.budgetBytes };
-  // Building and canonicalizing every advertised schema dominates doctor and
-  // server startup, so the compiled runtime records the default digests once.
-  // Recorded digests describe the complete default catalog only; scoped or
-  // reshaped identities always compute from their own contracts.
+  // Only the exact built-in presentations have build-time identities. Source
+  // runs and custom budgets still compute from their selected schemas lazily.
+  const inputProfile =
+    selectedPresentation === undefined
+      ? "full"
+      : selectedPresentation.budgetBytes === COMPACT_INPUT_SCHEMA_BUDGET_BYTES
+        ? "compact"
+        : undefined;
+  // Recorded digests describe the complete default catalog only; a scoped or
+  // reshaped contract set always computes from its own contracts.
   let catalogDigests: CatalogDigests | undefined =
-    selectedPresentation === undefined &&
-    outputSchemaProfile === "full" &&
-    contracts === TOOL_CONTRACTS
-      ? RECORDED_CATALOG_DIGESTS
-      : undefined;
+    inputProfile === undefined || contracts !== TOOL_CONTRACTS
+      ? undefined
+      : RECORDED_CATALOG_DIGEST_PROFILES?.[inputProfile][outputSchemaProfile];
   return {
     counts: {
       cli_commands: CLI_COMMAND_NAMES.length,

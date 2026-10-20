@@ -527,13 +527,15 @@ const catalogIdentityForEnvironment = (
       : undefined,
   );
   return {
-    catalog: createCatalogIdentity(
-      compactPresentationForMcpInputSchemaProfile(
+    catalog: createCatalogIdentity({
+      compactPresentation: compactPresentationForMcpInputSchemaProfile(
         inputProfile.ok ? inputProfile.value : undefined,
       ),
       contracts,
-      outputProfile.ok ? (outputProfile.value ?? "full") : "full",
-    ),
+      outputSchemaProfile: outputProfile.ok
+        ? (outputProfile.value ?? "full")
+        : "full",
+    }),
     expectedToolNames: contracts.map(({ name }) => name),
   };
 };

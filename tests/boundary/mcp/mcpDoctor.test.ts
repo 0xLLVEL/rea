@@ -1,7 +1,9 @@
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { execFile } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -23,7 +25,97 @@ import { MCP_STARTUP_POLICY } from "../../../src/mcpStartupPolicy.js";
 
 afterEach(() => vi.useRealTimers());
 
+/**
+ * Compiled-digest probe. Node runs the generated modules exactly as they ship,
+ * outside Vitest's source loader, so recorded and lazily computed identities
+ * are compared through the built entry points.
+ */
+const compiledDigestProbe = `
+        import assert from "node:assert/strict";
+        import { createCatalogIdentity, createCatalogDigests } from "./dist/catalogIdentity.js";
+        import { RECORDED_CATALOG_DIGEST_PROFILES as profiles } from "./dist/recordedCatalogDigests.js";
+        import { COMPACT_INPUT_SCHEMA_BUDGET_BYTES as budgetBytes } from "./dist/config/mcpInputSchemaProfile.js";
+        assert.ok(Object.isFrozen(profiles));
+        for (const input of ["full", "compact"]) {
+          assert.ok(Object.isFrozen(profiles[input]));
+          for (const output of ["full", "off"]) {
+            const identity = createCatalogIdentity({
+              compactPresentation:
+                input === "compact" ? { budgetBytes } : undefined,
+              outputSchemaProfile: output,
+            });
+            assert.equal(identity.digests, profiles[input][output]);
+            assert.ok(Object.isFrozen(identity.digests));
+          }
+        }
+        const selection = { budgetBytes: 1 };
+        const custom = createCatalogIdentity({
+          compactPresentation: selection,
+          outputSchemaProfile: "off",
+        });
+        selection.budgetBytes = budgetBytes;
+        const expected = createCatalogDigests(undefined, undefined, { budgetBytes: 1 }, "off");
+        assert.deepEqual(custom.digests, expected);
+        assert.notEqual(custom.digests.tools_sha256, profiles.compact.off.tools_sha256);
+        assert.equal(custom.digests, custom.digests);
+      `;
+
+/** Catalog identity the production child must report for each advertised profile. */
+const catalogProfileCases = [
+  {
+    name: "full",
+    environment: {
+      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
+    },
+    identity: CATALOG_IDENTITY,
+  },
+  {
+    name: "compact",
+    environment: {
+      REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
+    },
+    identity: createCatalogIdentity({
+      compactPresentation:
+        compactPresentationForMcpInputSchemaProfile("compact"),
+    }),
+  },
+  {
+    name: "output schemas off",
+    environment: {
+      REA_MCP_INPUT_SCHEMA_PROFILE: "full",
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "off",
+    },
+    identity: createCatalogIdentity({
+      contracts: TOOL_CONTRACTS,
+      outputSchemaProfile: "off",
+    }),
+  },
+  {
+    name: "compact input and output schemas off",
+    environment: {
+      REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "off",
+    },
+    identity: createCatalogIdentity({
+      compactPresentation:
+        compactPresentationForMcpInputSchemaProfile("compact"),
+      contracts: TOOL_CONTRACTS,
+      outputSchemaProfile: "off",
+    }),
+  },
+];
+
 describe("production MCP doctor", () => {
+  it("reuses immutable compiled profile digests and preserves custom-budget identity", async () => {
+    await promisify(execFile)(
+      process.execPath,
+      ["--input-type=module", "--eval", compiledDigestProbe],
+      { timeout: 30_000 },
+    );
+  }, 35_000);
+
   it("preserves the full-output envelope for startup failures", async () => {
     const result = await runProductionMcpDoctorCli(
       ["--json", "--full-output"],
@@ -46,46 +138,7 @@ describe("production MCP doctor", () => {
     });
   });
 
-  it.each([
-    {
-      name: "full",
-      environment: {
-        REA_MCP_INPUT_SCHEMA_PROFILE: "full",
-        REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
-      },
-      identity: CATALOG_IDENTITY,
-    },
-    {
-      name: "compact",
-      environment: {
-        REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
-        REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
-      },
-      identity: createCatalogIdentity(
-        compactPresentationForMcpInputSchemaProfile("compact"),
-      ),
-    },
-    {
-      name: "output schemas off",
-      environment: {
-        REA_MCP_INPUT_SCHEMA_PROFILE: "full",
-        REA_MCP_OUTPUT_SCHEMA_PROFILE: "off",
-      },
-      identity: createCatalogIdentity(undefined, TOOL_CONTRACTS, "off"),
-    },
-    {
-      name: "compact input and output schemas off",
-      environment: {
-        REA_MCP_INPUT_SCHEMA_PROFILE: "compact",
-        REA_MCP_OUTPUT_SCHEMA_PROFILE: "off",
-      },
-      identity: createCatalogIdentity(
-        compactPresentationForMcpInputSchemaProfile("compact"),
-        TOOL_CONTRACTS,
-        "off",
-      ),
-    },
-  ])(
+  it.each(catalogProfileCases)(
     "connects to the production stdio child and verifies the $name catalog",
     async ({ environment, identity }) => {
       const result = await runProductionMcpDoctor({

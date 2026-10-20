@@ -4,6 +4,11 @@ import { stat as statPath } from "node:fs/promises";
 import type { Stats } from "node:fs";
 
 import {
+  requireAnalysisViewRetention,
+  summarizeRetainedAnalysis,
+  type AnalysisViewRetention,
+} from "../analysisView/AnalysisViewService.js";
+import {
   AnalysisAccessDeniedError,
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -179,24 +184,41 @@ export class ReverseEngineeringService {
     if (!cleanup.ok) throw cleanup.error;
   }
 
-  inspectWithObjdump(
+  async inspectWithObjdump(
     rawInput: unknown,
     options: { readonly signal?: AbortSignal } = {},
+    retention: AnalysisViewRetention = {
+      evidenceById: undefined,
+      recordEvidence: undefined,
+    },
   ): Promise<Result<Evidence, AnalysisError>> {
     const parsed = objdumpInputSchema.safeParse(rawInput);
     if (!parsed.success)
-      return Promise.resolve(
-        err(new AnalysisInputError("inspect_with_objdump")),
+      return err(new AnalysisInputError("inspect_with_objdump"));
+    const { detail, ...input } = parsed.data;
+    if (detail === "summary") {
+      const ready = requireAnalysisViewRetention(
+        "inspect_with_objdump",
+        retention,
       );
-    const input = parsed.data;
+      if (!ready.ok) return ready;
+    }
     const command = this.#commands.objdump(input);
-    return this.#observe(
+    let parameters: Readonly<Record<string, JsonValue>>;
+    if (input.operation === "disassemble") {
+      const { symbol, ...base } = input;
+      parameters = symbol === undefined ? base : { ...base, symbol };
+    } else parameters = input;
+    const observed = await this.#observe(
       "inspect_with_objdump",
       command,
       input.operation === "architectures" ? undefined : input.path,
-      input,
+      parameters,
       options.signal,
     );
+    return observed.ok && detail === "summary"
+      ? summarizeRetainedAnalysis(observed.value, retention)
+      : observed;
   }
 
   executeRizinCommand(
@@ -581,6 +603,13 @@ export class ReverseEngineeringService {
           ]),
       "A non-zero process exit is preserved as an observed command result.",
       ...(operation === "inspect_with_objdump" &&
+      typeof parameters.symbol === "string"
+        ? [
+            "Disassembly is scoped to the caller-selected symbol using the provider's matching and symbol-boundary semantics; an empty match does not establish artifact-wide absence.",
+          ]
+        : []),
+      ...(operation === "inspect_with_objdump" &&
+      parameters.operation === "dwarf" &&
       parameters.follow_debug_links === true
         ? [
             "DWARF output may include local debug-link files whose identities are not bound to Evidence.",
