@@ -10,6 +10,7 @@ import { TOOL_FAMILY_DEFINITIONS } from "../../../src/contracts/toolFamilies.js"
 import { registerSessionStatusTool } from "../../../src/server/registerSessionStatusTool.js";
 import type { BinarySessionPort } from "../../../src/application/binary/BinarySessionPort.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
+import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { ToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 
@@ -55,6 +56,54 @@ const familyTools = (...ids: readonly string[]): readonly string[] =>
   TOOL_FAMILY_DEFINITIONS.filter(({ id }) => ids.includes(id)).flatMap(
     ({ contracts }) => contracts.map(({ name }) => name),
   );
+
+/** Route facts with one direct operation the status report must hide. */
+const sessionStatusWithDirectOperations = () => ({
+  open: false,
+  cleanup_pending: false,
+  analysis_run: null,
+  analysis_activity: { status: "not_observed", providers: [] },
+  provider_operation_health: null,
+  analysis_provider_binding: null,
+  capabilities: [
+    {
+      provider: { id: "probe", name: "Probe", version: "1" },
+      shared_limitations: [],
+      groups: [
+        {
+          operations: [
+            "open_binary",
+            "get_navigation_context",
+            "current_document",
+            "current_address",
+            "resolve_containing_procedure",
+            "inspect_macho",
+          ],
+          effects: ["mutates_artifact"],
+          limitations: [],
+          available: true,
+          reason: null,
+          availability_code: null,
+        },
+      ],
+    },
+  ],
+  analysis_provider_candidates: [],
+});
+
+interface SessionReport {
+  readonly capabilities?: readonly {
+    readonly groups: readonly { readonly operations: readonly string[] }[];
+  }[];
+  readonly tool_availability?: {
+    readonly groups: readonly {
+      readonly names: readonly string[];
+      readonly available: boolean;
+      readonly reason: string | null;
+      readonly default_mode_available?: boolean;
+    }[];
+  };
+}
 
 describe("MCP tool family advertising", () => {
   it("advertises every catalog tool when no scope is set", async () => {
@@ -141,4 +190,52 @@ describe("MCP tool family advertising", () => {
       expect(calls.sort()).toEqual([...probed].sort());
     },
   );
+
+  it("reports only advertised operations without erasing composed availability", async () => {
+    // `session` advertises `get_navigation_context`, while `direct` owns the
+    // operations its default mode composes.
+    const server = scopedServer(new Set(["session"]));
+    registerSessionStatusTool({
+      server,
+      session: {
+        status: sessionStatusWithDirectOperations,
+      } as unknown as BinarySessionPort,
+      contract: toolContract("binary_session"),
+      startedAt: new Date().toISOString(),
+      availabilityPolicy: () => ({ processCaptureEnabled: false }),
+      androidAnalysisAvailability: async () => ({
+        status: "unavailable",
+        code: "runtime_missing",
+        reason: "android runtime is unavailable",
+        diagnostics: {},
+      }),
+    });
+    let content: Record<string, unknown> | undefined;
+    await withClient(server, async (client) => {
+      const result = await client.callTool({
+        name: "binary_session",
+        arguments: {},
+      });
+      content = jsonObjectSchema.parse(
+        jsonObjectSchema.parse(result.structuredContent).result,
+      );
+    });
+
+    const report = content as SessionReport | undefined;
+    // The public report must follow the scope of `tools/list`.
+    const reported = report?.capabilities
+      ?.flatMap((set) => set.groups.flatMap(({ operations }) => operations))
+      .sort();
+    expect(reported).toEqual(["get_navigation_context", "open_binary"]);
+    // Availability was built from the complete provider facts: the composed
+    // tool needs operations the public report hides.
+    const available = report?.tool_availability?.groups.find(({ names }) =>
+      names.includes("get_navigation_context"),
+    );
+    expect(available).toMatchObject({
+      available: true,
+      reason: "available",
+      default_mode_available: true,
+    });
+  });
 });

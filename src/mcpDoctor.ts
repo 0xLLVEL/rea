@@ -13,7 +13,7 @@ import {
 import { parseMcpOutputSchemaProfile } from "./config/mcpOutputSchemaProfile.js";
 import { parseMcpToolFamilies } from "./config/mcpToolFamilies.js";
 import { contractsForToolFamilies } from "./contracts/toolFamilies.js";
-import { PROMPT_CONTRACTS } from "./contracts/promptContracts.js";
+import { promptsForToolFamilies } from "./contracts/promptContracts.js";
 import { err, ok } from "./domain/result.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
 import { MCP_STARTUP_POLICY } from "./mcpStartupPolicy.js";
@@ -197,6 +197,7 @@ class OwnedStdioClientTransport extends StdioClientTransport {
 interface DoctorCatalogExpectation {
   readonly catalog: ReturnType<typeof createCatalogIdentity>;
   readonly expectedToolNames: readonly string[];
+  readonly expectedPromptNames: readonly string[];
 }
 
 const inspectProductionMcpSession = async (
@@ -238,7 +239,7 @@ const inspectProductionMcpSession = async (
       tools.tools.map(({ name }) => name),
     ),
     prompts: compareInventory(
-      PROMPT_CONTRACTS.map(({ name }) => name),
+      expectation.expectedPromptNames,
       prompts.prompts.map(({ name }) => name),
     ),
   };
@@ -521,11 +522,12 @@ const catalogIdentityForEnvironment = (
   // reports with the server's diagnostics; expect the complete catalog so a
   // failed start is never mistaken for a scope mismatch.
   const families = parseMcpToolFamilies(environment.REA_MCP_TOOL_FAMILIES);
-  const contracts = contractsForToolFamilies(
+  const selection =
     families.ok && families.value !== undefined
       ? new Set(families.value)
-      : undefined,
-  );
+      : undefined;
+  const contracts = contractsForToolFamilies(selection);
+  const promptContracts = promptsForToolFamilies(selection);
   return {
     catalog: createCatalogIdentity({
       compactPresentation: compactPresentationForMcpInputSchemaProfile(
@@ -535,8 +537,10 @@ const catalogIdentityForEnvironment = (
       outputSchemaProfile: outputProfile.ok
         ? (outputProfile.value ?? "full")
         : "full",
+      promptContracts,
     }),
     expectedToolNames: contracts.map(({ name }) => name),
+    expectedPromptNames: promptContracts.map(({ name }) => name),
   };
 };
 

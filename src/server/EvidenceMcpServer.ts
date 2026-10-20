@@ -27,6 +27,10 @@ import {
   contractsForToolFamilies,
 } from "../contracts/toolFamilies.js";
 import {
+  promptsForToolFamilies,
+  type PromptContract,
+} from "../contracts/promptContracts.js";
+import {
   presentAdvertisedInputSchema,
   type CompactInputSchemaPresentation,
 } from "../contracts/compactInputSchema.js";
@@ -184,6 +188,9 @@ export class EvidenceMcpServer extends RequestTrackingMcpServer {
             compactPresentation: this.compactPresentation,
             contracts: contractsForToolFamilies(this.advertisedToolFamilies),
             outputSchemaProfile: this.omitOutputSchemas ? "off" : "full",
+            promptContracts: promptsForToolFamilies(
+              this.advertisedToolFamilies,
+            ),
           });
   }
 
@@ -245,6 +252,15 @@ export class EvidenceMcpServer extends RequestTrackingMcpServer {
     if (this.advertisedToolFamilies === undefined) return true;
     const family = toolFamilyId(name);
     return family !== undefined && this.advertisedToolFamilies.has(family);
+  }
+
+  /**
+   * Guided prompts whose complete workflow tool set is advertised under this
+   * registration's scope. A partially advertised workflow would send the
+   * agent to a disabled call, so prompts outside the scope stay unregistered.
+   */
+  advertisedPrompts(): readonly PromptContract[] {
+    return promptsForToolFamilies(this.advertisedToolFamilies);
   }
 
   /**
