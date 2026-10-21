@@ -143,6 +143,10 @@ export const providerCatalog = (sources) => {
       contracts: sources.goContracts.GO_TOOL_CONTRACTS,
     },
     {
+      identity: sources.gpuProvider.GPU_CODE_OBJECTS_PROVIDER_IDENTITY,
+      contracts: sources.gpuContracts.GPU_TOOL_CONTRACTS,
+    },
+    {
       identity: sources.il2cppProvider.IL2CPP_METADATA_PROVIDER_IDENTITY,
       contracts: sources.il2cppContracts.IL2CPP_TOOL_CONTRACTS,
     },
