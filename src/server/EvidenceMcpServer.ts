@@ -34,7 +34,10 @@ import {
   presentAdvertisedInputSchema,
   type CompactInputSchemaPresentation,
 } from "../contracts/compactInputSchema.js";
-import { CATALOG_IDENTITY, createCatalogIdentity } from "../catalogIdentity.js";
+import {
+  FULL_CATALOG_IDENTITY,
+  createCatalogIdentity,
+} from "../catalogIdentity.js";
 import { transformAdvertisedInputJsonSchema } from "../contracts/toolSchemaMetadata.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
 import {
@@ -183,7 +186,7 @@ export class EvidenceMcpServer extends RequestTrackingMcpServer {
       this.compactPresentation === undefined &&
       !this.omitOutputSchemas &&
       this.advertisedToolFamilies === undefined
-        ? CATALOG_IDENTITY
+        ? FULL_CATALOG_IDENTITY
         : createCatalogIdentity({
             compactPresentation: this.compactPresentation,
             contracts: contractsForToolFamilies(this.advertisedToolFamilies),
