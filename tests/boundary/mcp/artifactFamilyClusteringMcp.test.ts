@@ -31,6 +31,7 @@ import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
 import type { Evidence } from "../../../src/domain/evidence.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
@@ -493,8 +494,18 @@ it("refuses a member that is not artifact inventory Evidence", async () => {
     // A member that is not assembled Evidence is refused by the advertised
     // schema, so no artifact processor ever sees it.
     expect(refused.isError).toBe(true);
-    const text = refused.content.find((item) => item.type === "text");
-    expect(text?.type === "text" ? text.text : "").toMatch(/Input validation/u);
+    // The canonical input-contract failure survives the SDK diagnostic wording,
+    // so assert the structured contract instead of a message fragment.
+    expect(parseMcpToolError(refused)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        recovery: {
+          kind: "inspect_input_contract",
+          operation: "cluster_artifacts",
+        },
+        details: { operation: "cluster_artifacts" },
+      },
+    });
   } finally {
     await Promise.allSettled([client.close(), server.close(), session.close()]);
   }
