@@ -1112,7 +1112,7 @@ covers, not a frozen tool count.
 | Android application analysis                      | `android,adb,apktool,session`                             | class and method inspection, device bridge, resource decoding; add `frida` for dynamic instrumentation, `jeb` for JEB projects, `flutter` for Flutter builds |
 | Native macOS or iOS binary                        | `native,artifact,session`                                 | Mach-O, signature and property-list inspection plus container extraction                                                                                     |
 | Managed .NET assembly                             | `managed,session`                                         | managed member comparison and reconstruction against the evidence workflow                                                                                   |
-| Electron or browser-hosted JavaScript application | `browser,electron,application,javascript-runtime,session` | runtime targets, feature tracing, JavaScript semantics and reconstruction obligations; add `browser` for live page inspection, bundle and capture tools      |
+| Electron or browser-hosted JavaScript application | `browser,electron,application,javascript-runtime,session` | runtime targets, live page inspection, bundle and capture tools, feature tracing, JavaScript semantics and reconstruction obligations                        |
 | Evidence bookkeeping only                         | `session`                                                 | open and close binaries, bundles, comparisons, unknown tracking                                                                                              |
 
 Scopes are additive and start narrow: begin with the families the workflow
