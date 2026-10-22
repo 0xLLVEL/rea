@@ -3,6 +3,7 @@ import {
   mkdir,
   open as fsOpen,
   readFile,
+  realpath as fsRealpath,
   rename,
   writeFile,
   type FileHandle,
@@ -38,11 +39,17 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...actual, open: vi.fn(actual.open), lstat: vi.fn(actual.lstat) };
+  return {
+    ...actual,
+    open: vi.fn(actual.open),
+    lstat: vi.fn(actual.lstat),
+    realpath: vi.fn(actual.realpath),
+  };
 });
 
 const openMock = vi.mocked(fsOpen);
 const lstatMock = vi.mocked(fsLstat);
+const realpathMock = vi.mocked(fsRealpath);
 let actualFs: typeof import("node:fs/promises");
 
 beforeEach(async () => {
@@ -52,11 +59,13 @@ beforeEach(async () => {
     );
   openMock.mockImplementation((...args) => actualFs.open(...args));
   lstatMock.mockImplementation((...args) => actualFs.lstat(...args));
+  realpathMock.mockImplementation((...args) => actualFs.realpath(...args));
 });
 
 afterEach(() => {
   openMock.mockReset();
   lstatMock.mockReset();
+  realpathMock.mockReset();
 });
 
 const holdReadHandle = (
@@ -352,12 +361,11 @@ it("stops removal when a completed reread leaves its handle unreleased", async (
   }
 });
 
-it("keeps the ZCode fallback row when its profile probe is unresolved", async () => {
+it("keeps the shared registration fail-closed when ZCode's probe is unresolved", async () => {
   // A denied profile probe leaves ZCode's applicability unresolved, never
-  // absent: the shared fallback must stay in ZCode's scope so its row is
-  // inspected and removed, fail-closed, instead of leaving an installed
-  // ZCode wired to purged data. Definitive absence still keeps ZCode out of
-  // another product's primary storage.
+  // absent: the shared file stays fail-closed so its row is inspected and
+  // removed instead of leaving an installed ZCode wired to purged data.
+  // Definitive absence still leaves the file to FreeBuff, ZCode's owner.
   const home = await createTestTempDirectory("rea-zcode-fallback-unresolved-");
   const fallback = join(home, ".agents", "mcp.json");
   const profile = join(home, ".zcode", "cli");
@@ -377,30 +385,137 @@ it("keeps the ZCode fallback row when its profile probe is unresolved", async ()
     "linux",
   );
   try {
-    const clients = await unresolved.clients();
-    const row = clients.find(
-      (candidate) =>
-        candidate.name === "zcode" && candidate.configPath === fallback,
+    const rows = (await unresolved.clients()).filter(
+      (candidate) => candidate.configPath === fallback,
     );
-    expect(row).toMatchObject({ format: "zcode_fallback" });
-    // Fail-closed: the unresolved row carries no unverified softening, so a
+    // One physical file, one owner: FreeBuff edits the shared file once and
+    // ZCode reports that same outcome instead of racing it to "absent".
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ name: "freebuff", sharedWith: ["zcode"] });
+    // Fail-closed: the unresolved reader carries no unverified softening, so a
     // failed read blocks removal instead of retaining around the purge.
-    expect(row?.applicability).toBeUndefined();
+    expect(rows[0]?.applicability).toBeUndefined();
   } finally {
     await unresolved.close?.();
   }
   lstatMock.mockImplementation((...args) => actualFs.lstat(...args));
   const absent = systemUninstallHost(home, undefined, { HOME: home }, "linux");
   try {
-    const clients = await absent.clients();
-    expect(
-      clients.some(
-        (candidate) =>
-          candidate.name === "zcode" && candidate.format === "zcode_fallback",
-      ),
-    ).toBe(false);
+    const rows = (await absent.clients()).filter(
+      (candidate) => candidate.configPath === fallback,
+    );
+    expect(rows).toHaveLength(1);
+    // Definitive absence keeps ZCode out of another product's primary storage.
+    expect(rows[0]?.sharedWith).toBeUndefined();
   } finally {
     await absent.close?.();
+  }
+});
+
+it("removes a shared registration once and reports that outcome to both clients", async () => {
+  // ZCode and FreeBuff both load ~/.agents/mcp.json. Queuing it per client
+  // removed the row as ZCode and then reported FreeBuff as "absent", losing
+  // the outcome for the client that owns the file, and it read and edited one
+  // shared resource twice.
+  const home = await createTestTempDirectory("rea-shared-removal-once-");
+  const shared = join(home, ".agents", "mcp.json");
+  await mkdir(join(home, ".zcode", "cli"), { recursive: true });
+  await mkdir(join(home, ".config", "freebuff-desktop"), { recursive: true });
+  expect(
+    await configureClientConfiguration(
+      { name: "freebuff", format: "json", configPath: shared },
+      {},
+      ["rea", "mcp"],
+    ),
+  ).toMatchObject({ status: "configured" });
+  const host = systemUninstallHost(home, undefined, { HOME: home }, "linux");
+  try {
+    const result = await runUninstall(false, host);
+    expect(result.status).toBe("complete");
+    expect(result.items).toContainEqual(
+      expect.objectContaining({
+        name: "freebuff",
+        status: "removed",
+        configuration_path: shared,
+      }),
+    );
+    // The fallback reader reports the owner's removal, never "absent".
+    const zcode = result.items.find(({ name }) => name === "zcode");
+    expect(zcode?.actions).toContainEqual(
+      expect.objectContaining({
+        status: "removed",
+        configuration_path: shared,
+      }),
+    );
+    expect(zcode?.actions).not.toContainEqual(
+      expect.objectContaining({
+        status: "skipped",
+        configuration_path: shared,
+      }),
+    );
+    expect(JSON.parse(await readFile(shared, "utf8"))).toEqual({
+      mcpServers: {},
+    });
+  } finally {
+    await host.close?.();
+  }
+});
+
+it("does not treat a dangling FreeBuff profile link as installed", async () => {
+  // Setup and doctor follow ~/.config/freebuff-desktop and reject a link whose
+  // target is gone. Discovery must agree: counting the leftover link as an
+  // installed product turns an unrelated malformed shared file into a blocking
+  // failure that stops every other REA removal.
+  const home = await createTestTempDirectory("rea-freebuff-dangling-profile-");
+  const shared = join(home, ".agents", "mcp.json");
+  const profile = join(home, ".config", "freebuff-desktop");
+  const cursor = join(home, ".cursor", "mcp.json");
+  await mkdir(dirname(shared), { recursive: true });
+  await writeFile(shared, "{ not json");
+  await mkdir(dirname(cursor), { recursive: true });
+  await writeFile(cursor, '{"keep":"before setup"}\n');
+  expect(
+    await configureClientConfiguration(
+      { name: "cursor", format: "json", configPath: cursor },
+      {},
+      ["rea", "mcp"],
+    ),
+  ).toMatchObject({ status: "configured" });
+  lstatMock.mockImplementation((path) =>
+    String(path) === profile
+      ? Promise.resolve({
+          isFile: () => false,
+          isDirectory: () => false,
+          isSymbolicLink: () => true,
+        } as unknown as Awaited<ReturnType<typeof fsLstat>>)
+      : actualFs.lstat(path),
+  );
+  realpathMock.mockImplementation((path) =>
+    String(path) === profile
+      ? Promise.reject(
+          Object.assign(
+            new Error("ENOENT: no such file or directory, realpath"),
+            { code: "ENOENT" },
+          ),
+        )
+      : actualFs.realpath(path),
+  );
+  const host = systemUninstallHost(home, undefined, { HOME: home }, "linux");
+  try {
+    const result = await runUninstall(false, host);
+    expect(result.status).toBe("complete");
+    // The unrelated registration is removed instead of blocked.
+    expect(result.items).toContainEqual(
+      expect.objectContaining({ name: "cursor", status: "removed" }),
+    );
+    expect(JSON.parse(await readFile(cursor, "utf8"))).not.toHaveProperty(
+      "mcpServers.rea",
+    );
+    expect(result.items).toContainEqual(
+      expect.objectContaining({ name: "freebuff", status: "retained" }),
+    );
+  } finally {
+    await host.close?.();
   }
 });
 

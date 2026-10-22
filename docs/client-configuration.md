@@ -379,9 +379,9 @@ with an installed native FreeBuff client/version; filesystem tests cover REA's
 editing, discovery, and ownership behavior only. Automatic applicability
 requires the FreeBuff profile directory even when the shared MCP file exists.
 
-FreeBuff is main-only and is not part of npm 6.4.0; `rea setup --client
-freebuff` against `@latest` reports an unsupported client until a release
-containing it is published.
+FreeBuff is main-only and is not in a published release yet; npm 6.7.0 is the
+latest. `rea setup --client freebuff` against `@latest` reports an unsupported
+client until a release containing it is published.
 
 ## DeepSeek Harness
 

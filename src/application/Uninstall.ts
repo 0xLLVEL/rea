@@ -123,6 +123,9 @@ export interface UninstallResult {
 /** Applicability established once from product-specific discovery evidence. */
 export interface UninstallClient extends SetupClient {
   readonly applicability?: "unverified";
+  /** Clients that load this same file as a fallback. The owner's outcome is
+   * their outcome too; they never inspect or edit the file again. */
+  readonly sharedWith?: readonly string[];
 }
 
 /** Filesystem boundary used by the contained uninstall workflow. */
@@ -176,7 +179,9 @@ export const runUninstall = async (
       status: "retained",
       detail: "Hopper is not owned by REA uninstall.",
     });
-    const reported = collapseUninstallItems(items);
+    const reported = collapseUninstallItems(
+      projectSharedRegistrations(items, clients),
+    );
     result = {
       status: reported.some(({ status }) => status === "failed")
         ? "failed"
@@ -241,6 +246,31 @@ const removeAll = async (
 };
 
 /**
+ * Report a shared file's single outcome under every client that loads it. The
+ * owner edits the file once, so a fallback reader reports what happened to its
+ * registration instead of finding it already absent.
+ */
+const projectSharedRegistrations = (
+  items: readonly UninstallItem[],
+  clients: readonly UninstallClient[],
+): UninstallItem[] => {
+  const readersByPath = new Map<string, readonly string[]>();
+  for (const client of clients)
+    if (client.sharedWith !== undefined && client.sharedWith.length > 0)
+      readersByPath.set(client.configPath, client.sharedWith);
+  if (readersByPath.size === 0) return [...items];
+  return items.flatMap((next) => {
+    const readers =
+      next.configuration_path === undefined
+        ? undefined
+        : readersByPath.get(next.configuration_path);
+    if (readers === undefined) return [next];
+    const { name, ...action } = next;
+    return [name, ...readers].map((reader) => ({ ...action, name: reader }));
+  });
+};
+
+/**
  * Ownership is a readable, recognizable REA-owned row, never the shared
  * file's existence. An unrelated malformed file must not establish ownership;
  * it stays retained without blocking other removals.
@@ -281,20 +311,32 @@ const hasOwnershipEvidence = async (
   return false;
 };
 
+/** Installation evidence for one probed path, never inferred from absence. */
+interface DiscoveryProbe {
+  readonly applicable: boolean;
+  readonly unresolved: boolean;
+}
+
 /** A client's shared-storage applicability from its discovery paths: a hit
  * proves installation, a miss leaves it unproven, and any other probe failure
  * leaves it unresolved — never absence. */
 const discoveryApplicability = async (
   discoveryPaths: readonly string[] | undefined,
   fileSystem: UninstallFileSystem,
-): Promise<{ readonly applicable: boolean; readonly unresolved: boolean }> => {
+): Promise<DiscoveryProbe> => {
   if (discoveryPaths === undefined)
     return { applicable: true, unresolved: false };
   let applicable = false;
   let unresolved = false;
   for (const path of discoveryPaths) {
     try {
-      await fileSystem.stat(path);
+      // The product's own directory proves installation, not a leftover link
+      // to it: `stat` is `lstat`, so a dangling profile link passes here even
+      // though setup and doctor, which follow the target, reject it. Resolve
+      // the link for the same answer, keeping `lstat` for removal safety.
+      const stats = await fileSystem.stat(path);
+      if (stats.isSymbolicLink() && fileSystem.realpath !== undefined)
+        await fileSystem.realpath(path);
       return { applicable: true, unresolved: false };
     } catch (cause: unknown) {
       // Absence keeps scanning until one discovery path exists; any
@@ -303,6 +345,59 @@ const discoveryApplicability = async (
     }
   }
   return { applicable, unresolved };
+};
+
+/** One physical configuration path a client claims. */
+interface ClientConfigClaim {
+  readonly client: SetupClient;
+  readonly configPath: string;
+  /** The path is another product's storage this client falls back to. */
+  readonly fallback: boolean;
+}
+
+/** One physical file, the client whose configuration it is, and the other
+ * clients that load it as a fallback. */
+interface SharedConfigPath {
+  readonly owner: ClientConfigClaim;
+  readonly readers: readonly ClientConfigClaim[];
+}
+
+/**
+ * Resolve each physical configuration file to one owner. Every path is listed
+ * once, so a file two products load is inspected, edited, and reported as one
+ * decision instead of racing to "absent" after the first removal.
+ */
+const sharedConfigPaths = (
+  clients: readonly SetupClient[],
+): readonly SharedConfigPath[] => {
+  const claimsByPath = new Map<string, ClientConfigClaim[]>();
+  for (const client of clients)
+    for (const claim of [
+      ...uninstallConfigPaths(client).map((configPath) => ({
+        client,
+        configPath,
+        fallback: false,
+      })),
+      ...(client.zcodeFallbackPath === undefined
+        ? []
+        : [
+            {
+              client,
+              configPath: client.zcodeFallbackPath,
+              fallback: true,
+            },
+          ]),
+    ])
+      claimsByPath.set(claim.configPath, [
+        ...(claimsByPath.get(claim.configPath) ?? []),
+        claim,
+      ]);
+  return [...claimsByPath.values()].map((claims) => {
+    const owner = claims.find((claim) => !claim.fallback) ?? claims[0];
+    if (owner === undefined)
+      throw new Error("A configuration path has no claiming client.");
+    return { owner, readers: claims.filter((claim) => claim !== owner) };
+  });
 };
 
 /** Create uninstall effects contained to detected client configs and REA-owned paths. */
@@ -332,49 +427,63 @@ export const systemUninstallHost = (
     clients: async () => {
       const supported = supportedClients(home, platform, environment);
       redirection = appDataRedirection(supported);
+      // Shared configuration alone cannot establish product applicability.
+      // Definitive absence leaves the shared paths unverified while owned
+      // rows in a readable configuration can still be removed independently;
+      // an unresolved probe is unknown, never absence.
+      const probes = new Map<string, DiscoveryProbe>();
+      for (const client of supported)
+        probes.set(
+          client.name,
+          await discoveryApplicability(client.discoveryPaths, fileSystem),
+        );
+      const paths = sharedConfigPaths(supported);
       const clients: UninstallClient[] = [];
-      for (const client of supported) {
-        // Shared configuration alone cannot establish product applicability.
-        // Definitive absence leaves the shared paths unverified while owned
-        // rows in a readable configuration can still be removed
-        // independently; an unresolved probe is unknown, never absence.
-        const { applicable, unresolved: unresolvedProbe } =
-          await discoveryApplicability(client.discoveryPaths, fileSystem);
-        // Only definitive absence may soften failures for storage REA does not
-        // own: a denied or failed probe leaves applicability unresolved, and
-        // unresolved applicability must not downgrade shared-config failures
-        // to retained. A denied product-local path means an unknown
-        // registration state, which must stop uninstall instead of reporting
-        // success.
-        const sharedPaths = clientSharedRegistrationPaths(client);
-        const applicabilityFor = (
-          configPath: string,
-        ): Pick<UninstallClient, "applicability"> =>
-          applicable || unresolvedProbe || !sharedPaths.has(configPath)
-            ? {}
-            : { applicability: "unverified" };
-        for (const configPath of uninstallConfigPaths(client))
-          clients.push({
-            ...client,
-            configPath,
-            ...applicabilityFor(configPath),
-          }); // ZCode's fallback is another product's primary storage, so ZCode may
-        // only act on it once its own profile directory proves it is
-        // installed; a denied or failed probe is unresolved, never absence,
-        // so it keeps the fallback in scope for fail-closed inspection.
-        if (
-          (applicable || unresolvedProbe) &&
-          client.zcodeFallbackPath !== undefined
-        )
-          clients.push({
-            ...client,
-            configPath: client.zcodeFallbackPath,
-            format: "zcode_fallback" as const,
-            ...applicabilityFor(client.zcodeFallbackPath),
+      for (const client of supported)
+        for (const path of paths) {
+          if (path.owner.client !== client) continue;
+          // A fallback reader constrains this file only while it may load it:
+          // definitive absence leaves the file to its owner. A reader that may
+          // load the owner's registration makes applicability one fact per
+          // physical file, so its installed proof applies and its unresolved
+          // probe keeps the file fail-closed.
+          const readers = path.readers.filter(({ client: reader }) => {
+            const probe = probes.get(reader.name);
+            return probe?.applicable === true || probe?.unresolved === true;
           });
-        // Shared storage is inspected once and the decision is reported once.
-        // See ClientRegistrationStatus.sharedRegistration for the ownership model.
-      }
+          const probesForPath = [path.owner, ...readers].map(
+            ({ client: participant }) =>
+              probes.get(participant.name) ?? {
+                applicable: false,
+                unresolved: false,
+              },
+          );
+          // Only definitive absence may soften failures for storage REA does
+          // not own: a denied or failed probe leaves applicability unresolved,
+          // and unresolved applicability must not downgrade shared-config
+          // failures to retained. A denied product-local path means an unknown
+          // registration state, which must stop uninstall instead of reporting
+          // success.
+          const applicability: Pick<UninstallClient, "applicability"> =
+            probesForPath.some(({ applicable }) => applicable) ||
+            probesForPath.some(({ unresolved }) => unresolved) ||
+            !clientSharedRegistrationPaths(client).has(path.owner.configPath)
+              ? {}
+              : { applicability: "unverified" };
+          clients.push({
+            ...client,
+            configPath: path.owner.configPath,
+            ...(path.owner.fallback
+              ? { format: "zcode_fallback" as const }
+              : {}),
+            ...applicability,
+            ...(readers.length === 0
+              ? {}
+              : {
+                  sharedWith: readers.map(({ client: reader }) => reader.name),
+                }),
+          });
+        }
       return clients;
     },
     inspectClient: (client) =>

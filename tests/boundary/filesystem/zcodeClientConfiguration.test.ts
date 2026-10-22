@@ -271,8 +271,11 @@ describe("ZCode fallback uninstall", () => {
   };
 
   it.each(["comment", "trailing-comma", "bom"])(
-    "fails closed on strict fallback syntax: %s",
+    "edits the owner's dialect instead of ZCode's strict fallback syntax: %s",
     async (mode) => {
+      // ~/.agents/mcp.json is FreeBuff's own configuration, so FreeBuff's
+      // dialect decides whether it is editable. ZCode's stricter fallback view
+      // must not block a removal the file's owner can perform.
       const { home } = await zcodeClient();
       const valid = await writeFallback(home, {
         rea: owned,
@@ -286,13 +289,22 @@ describe("ZCode fallback uninstall", () => {
             : valid.replace(/\}\s*$/u, ",}");
       await writeFile(fallbackPath(home), original);
       const result = await runUninstall(false, systemUninstallHost(home));
+      expect(result.status).toBe("complete");
+      // The shared file is removed once and both of its clients report that.
       expect(result.items).toContainEqual(
-        expect.objectContaining({ name: "zcode", status: "failed" }),
+        expect.objectContaining({ name: "freebuff", status: "removed" }),
       );
-      expect(await readFile(fallbackPath(home), "utf8")).toBe(original);
-      await expect(
-        readFile(`${fallbackPath(home)}.rea.backup`),
-      ).rejects.toMatchObject({ code: "ENOENT" });
+      expect(
+        result.items
+          .find(({ name }) => name === "zcode")
+          ?.actions?.map(({ status }) => status),
+      ).toContain("removed");
+      const edited = await readFile(fallbackPath(home), "utf8");
+      expect(edited).not.toContain('"rea"');
+      expect(edited).toContain("other-server");
+      expect(await readFile(`${fallbackPath(home)}.rea.backup`, "utf8")).toBe(
+        original,
+      );
     },
   );
 
