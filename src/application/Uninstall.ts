@@ -363,9 +363,11 @@ interface SharedConfigPath {
 }
 
 /**
- * Resolve each physical configuration file to one owner. Every path is listed
- * once, so a file two products load is inspected, edited, and reported as one
- * decision instead of racing to "absent" after the first removal.
+ * Resolve each physical configuration file to the clients that edit it. A
+ * client's own configuration owns its registration row; a fallback view only
+ * reports the owner's decision instead of racing it to "absent". Two clients
+ * that each declare the same path as their own configuration keep their own
+ * row, because they write different tables.
  */
 const sharedConfigPaths = (
   clients: readonly SetupClient[],
@@ -392,11 +394,18 @@ const sharedConfigPaths = (
         ...(claimsByPath.get(claim.configPath) ?? []),
         claim,
       ]);
-  return [...claimsByPath.values()].map((claims) => {
-    const owner = claims.find((claim) => !claim.fallback) ?? claims[0];
-    if (owner === undefined)
+  return [...claimsByPath.values()].flatMap((claims): SharedConfigPath[] => {
+    const fallbacks = claims.filter((claim) => claim.fallback);
+    const owners = claims.filter((claim) => !claim.fallback);
+    // A fallback view can only report one client's row. OpenCode can be pointed
+    // at FreeBuff's file through `OPENCODE_CONFIG`, and both then own the path
+    // while writing different tables, so each keeps its own decision.
+    if (owners.length > 0)
+      return owners.map((owner) => ({ owner, readers: fallbacks }));
+    const [only] = fallbacks;
+    if (only === undefined)
       throw new Error("A configuration path has no claiming client.");
-    return { owner, readers: claims.filter((claim) => claim !== owner) };
+    return [{ owner: only, readers: [] }];
   });
 };
 

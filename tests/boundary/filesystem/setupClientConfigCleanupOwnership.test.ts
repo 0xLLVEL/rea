@@ -461,6 +461,47 @@ it("removes a shared registration once and reports that outcome to both clients"
   }
 });
 
+it("keeps one row per client when OpenCode is pointed at FreeBuff's file", async () => {
+  // OPENCODE_CONFIG can make OpenCode and FreeBuff edit one file with different
+  // tables (`mcp.rea` and `mcpServers.rea`). Sharing one decision by filename
+  // would remove only OpenCode's row and report it for FreeBuff too, leaving
+  // FreeBuff registered while uninstall reports complete.
+  const home = await createTestTempDirectory("rea-shared-dialects-");
+  const shared = join(home, ".agents", "mcp.json");
+  await mkdir(dirname(shared), { recursive: true });
+  await mkdir(join(home, ".config", "freebuff-desktop"), { recursive: true });
+  expect(
+    await configureClientConfiguration(
+      { name: "freebuff", format: "json", configPath: shared },
+      {},
+      ["rea", "mcp"],
+    ),
+  ).toMatchObject({ status: "configured" });
+  const host = systemUninstallHost(
+    home,
+    undefined,
+    { HOME: home, OPENCODE_CONFIG: shared },
+    "linux",
+  );
+  try {
+    const rows = (await host.clients()).filter(
+      (candidate) => candidate.configPath === shared,
+    );
+    expect(rows.map(({ name }) => name).sort()).toEqual([
+      "freebuff",
+      "opencode",
+    ]);
+    expect(await runUninstall(false, host)).toMatchObject({
+      status: "complete",
+    });
+    expect(JSON.parse(await readFile(shared, "utf8"))).toEqual({
+      mcpServers: {},
+    });
+  } finally {
+    await host.close?.();
+  }
+});
+
 it("does not treat a dangling FreeBuff profile link as installed", async () => {
   // Setup and doctor follow ~/.config/freebuff-desktop and reject a link whose
   // target is gone. Discovery must agree: counting the leftover link as an
