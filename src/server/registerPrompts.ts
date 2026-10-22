@@ -1,18 +1,13 @@
-import {
-  currentMcpRequestSignal,
-  type EvidenceMcpServer,
-} from "./EvidenceMcpServer.js";
-import {
-  completable,
-  type RegisteredPrompt,
-} from "@modelcontextprotocol/server";
+import { promptArgumentsSchema } from "./promptArguments.js";
+import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
+import { currentMcpRequestSignal } from "./EvidenceMcpServerCore.js";
+import type { RegisteredPrompt } from "@modelcontextprotocol/server";
 import { z } from "zod";
 
 import type { AnalysisOperationPort } from "../application/AnalysisProvider.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import {
   renderGuidedPrompt,
-  type PromptArgumentContract,
   type PromptContract,
 } from "../contracts/promptContracts.js";
 import {
@@ -34,7 +29,7 @@ export const registerGuidedPrompts = (
   session?: BinarySessionPort,
 ): GuidedPromptRegistry => {
   const source = createPromptCompletionSource(analysis, session);
-  const completion: PromptCompletionSource = {
+  const completion = server.bindPromptCompletion({
     async complete(kind, value, context) {
       // Completions can query the same providers as tools. Cancellation alone
       // does not mean their provider cleanup has finished.
@@ -42,7 +37,7 @@ export const registerGuidedPrompts = (
         source.complete(kind, value, context),
       );
     },
-  };
+  });
   const prompts = new Map<string, RegisteredPrompt>();
   // Only workflows whose complete tool set is advertised: a partially
   // available workflow would name disabled calls in its rendered steps.
@@ -70,7 +65,7 @@ const registerPrompt = (
   completion: PromptCompletionSource,
 ): RegisteredPrompt => {
   const argsSchema = promptArgumentsSchema(contract, completion);
-  return server.registerPrompt(
+  return server.registerCanonicalPrompt(
     contract.name,
     {
       title: contract.title,
@@ -79,35 +74,6 @@ const registerPrompt = (
     },
     (arguments_) => promptResult(contract, arguments_),
   );
-};
-
-const promptArgumentsSchema = (
-  contract: PromptContract,
-  completion: PromptCompletionSource,
-) => {
-  const shape: Record<string, z.ZodType> = {};
-  for (const [name, argument] of Object.entries(contract.arguments))
-    shape[name] = argumentSchema(argument, completion);
-  return z.object(shape);
-};
-
-const argumentSchema = (
-  argument: PromptArgumentContract,
-  completion: PromptCompletionSource,
-): z.ZodType => {
-  const value = z
-    .string()
-    .min(1)
-    .refine((value) => value.trim().length > 0)
-    .describe(argument.description);
-  const kind = argument.completion;
-  const completed =
-    kind === undefined
-      ? value
-      : completable(value, async (partial, context) => [
-          ...(await completion.complete(kind, partial, context)),
-        ]);
-  return argument.required ? completed : completed.optional();
 };
 
 const promptResult = (contract: PromptContract, arguments_: unknown) => {

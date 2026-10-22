@@ -16,7 +16,10 @@ import { contractsForToolFamilies } from "./contracts/toolFamilies.js";
 import { promptsForToolFamilies } from "./contracts/promptContracts.js";
 import { err, ok } from "./domain/result.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
-import { MCP_STARTUP_POLICY } from "./mcpStartupPolicy.js";
+import {
+  MCP_STARTUP_POLICY,
+  mcpDoctorDeadlineRecovery,
+} from "./mcpStartupPolicy.js";
 
 const OUTPUT_FORMATS = ["toon", "json", "yaml", "md", "jsonl"] as const;
 type OutputFormat = (typeof OUTPUT_FORMATS)[number];
@@ -81,10 +84,9 @@ interface McpDoctorCheck {
 
 /** Diagnose the actual production stdio adapter with one startup-bounded SDK session. */
 export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
-  const catalog = catalogIdentityForEnvironment(options.environment);
-  const deadline =
-    performance.now() +
-    (options.deadlineMs ?? MCP_STARTUP_POLICY.doctorDeadlineMs);
+  const expectation = doctorExpectationForEnvironment(options.environment);
+  const budgetMs = options.deadlineMs ?? MCP_STARTUP_POLICY.doctorDeadlineMs;
+  const deadline = performance.now() + budgetMs;
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(new Error("Production MCP doctor deadline expired")),
@@ -111,7 +113,8 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
       client,
       deadline,
       controller.signal,
-      catalog,
+      expectation,
+      budgetMs,
     );
   } catch (cause: unknown) {
     result = {
@@ -125,7 +128,7 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
         {
           name: "transport",
           ok: false,
-          detail: errorMessage(cause),
+          detail: doctorTransportDetail(cause, budgetMs),
         },
       ],
     };
@@ -205,6 +208,7 @@ const inspectProductionMcpSession = async (
   deadline: number,
   signal: AbortSignal,
   expectation: DoctorCatalogExpectation,
+  budgetMs: number,
 ) => {
   const request = requestOptions(deadline, signal);
   const [tools, prompts] = await Promise.all([
@@ -212,27 +216,30 @@ const inspectProductionMcpSession = async (
     client.listPrompts(undefined, request),
   ]);
   const sessionTool = tools.tools.find(({ name }) => name === "binary_session");
-  const sessionExpected =
-    expectation.expectedToolNames.includes("binary_session");
-  const requestFlow =
-    sessionTool === undefined
-      ? err({
-          kind: "request-flow" as const,
-          detail: sessionExpected
-            ? "binary_session is missing from tools/list"
-            : "binary_session is outside the selected tool families; include the session family for request-flow and identity checks",
-        })
-      : await client
-          .callTool(
-            { name: "binary_session", arguments: {} },
-            {
-              ...requestOptions(deadline, signal),
-              toolDefinition: sessionTool,
-            },
-          )
-          .then(ok, (cause: unknown) =>
-            err({ kind: "request-flow" as const, detail: errorMessage(cause) }),
-          );
+  // A scope without the session family cannot serve request flow at all;
+  // every other case still probes the call so the report names the real cause.
+  const requestFlow = expectation.expectedToolNames.includes("binary_session")
+    ? await client
+        .callTool(
+          { name: "binary_session", arguments: {} },
+          {
+            ...requestOptions(deadline, signal),
+            ...(sessionTool === undefined
+              ? {}
+              : { toolDefinition: sessionTool }),
+          },
+        )
+        .then(ok, (cause: unknown) =>
+          err({
+            kind: "request-flow" as const,
+            detail: doctorTransportDetail(cause, budgetMs),
+          }),
+        )
+    : err({
+        kind: "request-flow" as const,
+        detail:
+          "binary_session is outside the selected tool families; include the session family for request-flow and identity checks",
+      });
   const inventory = {
     tools: compareInventory(
       expectation.expectedToolNames,
@@ -509,7 +516,7 @@ const targetFreeEnvironment = (
   return result;
 };
 
-const catalogIdentityForEnvironment = (
+const doctorExpectationForEnvironment = (
   environment: Readonly<Record<string, string | undefined>>,
 ): DoctorCatalogExpectation => {
   const inputProfile = parseMcpInputSchemaProfile(
@@ -578,3 +585,22 @@ const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
 
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
+
+const doctorDeadlineFired = (cause: unknown): boolean => {
+  const message = errorMessage(cause);
+  return (
+    message.includes("Production MCP doctor deadline expired") ||
+    message.includes("Request timed out") ||
+    message.includes("Maximum total timeout exceeded") ||
+    (cause instanceof Error &&
+      (cause.name === "TimeoutError" || cause.name === "AbortError"))
+  );
+};
+
+/** Name the fixed doctor deadline when it fires, without turning Codex's 30s into a REA knob. */
+const doctorTransportDetail = (cause: unknown, budgetMs: number): string => {
+  const message = errorMessage(cause);
+  return doctorDeadlineFired(cause)
+    ? `${message} ${mcpDoctorDeadlineRecovery(budgetMs)}`
+    : message;
+};
