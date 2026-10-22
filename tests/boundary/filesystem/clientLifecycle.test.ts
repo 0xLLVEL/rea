@@ -263,10 +263,12 @@ describe("Grok Build server table edits", () => {
       'command = "blender"',
       'args = ["--mcp"]',
       "",
+      "# about rea",
       "[mcp_servers.rea]",
       'command = "old"',
       'args = ["mcp"]',
       "",
+      "# rea environment",
       "[mcp_servers.rea.env]",
       'OLD = "1"',
       "",
@@ -276,6 +278,8 @@ describe("Grok Build server table edits", () => {
       "",
       "[privacy]",
       "share = false",
+      "",
+      "# trailing note",
       "",
     ].join("\r\n");
     await writeFile(configPath, original);
@@ -293,7 +297,14 @@ describe("Grok Build server table edits", () => {
     ).toMatchObject({ status: "configured" });
     const configured = await readFile(configPath, "utf8");
     expect(configured).toContain("\r\n");
-    expect(configured).toContain("# keep this comment");
+    expect(configured.replaceAll("\r\n", "")).not.toContain("\n");
+    for (const comment of [
+      "# keep this comment",
+      "# about rea",
+      "# rea environment",
+      "# trailing note",
+    ])
+      expect(configured).toContain(`${comment}\r\n`);
     expect(configured).toContain('disabled_mcp_servers = ["xapi"]');
     expect(configured).toContain('default_model = "grok-4"');
     expect(configured).toContain("[mcp_servers.blender]");
@@ -338,7 +349,13 @@ describe("Grok Build server table edits", () => {
       "complete",
     );
     const removed = await readFile(configPath, "utf8");
-    expect(removed).toContain("# keep this comment");
+    for (const comment of [
+      "# keep this comment",
+      "# about rea",
+      "# rea environment",
+      "# trailing note",
+    ])
+      expect(removed).toContain(`${comment}\r\n`);
     expect(removed).toContain("[mcp_servers.blender]");
     expect(removed).toContain("[[marketplace.sources]]");
     expect(removed).toContain('url = "https://example.test/market"');
