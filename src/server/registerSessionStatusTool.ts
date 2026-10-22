@@ -10,7 +10,7 @@ import {
 } from "../application/CapabilityInventory.js";
 import { restrictAdvertisedCapabilities } from "../application/binary/BinarySessionStatus.js";
 import { toolContract } from "../contracts/toolContracts.js";
-import type { ToolFamilyId } from "../contracts/toolFamilies.js";
+import type { ToolFamilyId } from "../contracts/toolFamilyIds.js";
 import type {
   ClientFeatureAvailability,
   ToolAvailability,
@@ -80,7 +80,9 @@ const probeSessionAvailability = (
     advertisesFamily("jeb")
       ? (probes.jebAnalysisAvailability?.(signal) ?? undefined)
       : undefined,
-    probes.evmLimiterAvailability?.(signal) ?? undefined,
+    advertisesFamily("artifact")
+      ? (probes.evmLimiterAvailability?.(signal) ?? undefined)
+      : undefined,
   ] as const).then(([android, adb, apktool, jeb, evmLimiter]) => ({
     android,
     adb,

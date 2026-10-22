@@ -39,10 +39,21 @@ import { ENHANCED_TOOL_CONTRACTS } from "./enhancedToolContracts.js";
 import { SESSION_TOOL_CONTRACTS } from "./sessionToolContracts.js";
 import { FRIDA_TOOL_CONTRACTS } from "./fridaToolContracts.js";
 import { TOOL_CONTRACTS } from "./toolContracts.js";
+import {
+  isToolFamilyId,
+  TOOL_FAMILY_IDS,
+  type ToolFamilyId,
+} from "./toolFamilyIds.js";
+
+export {
+  isToolFamilyId,
+  TOOL_FAMILY_IDS,
+  type ToolFamilyId,
+} from "./toolFamilyIds.js";
 
 /** One selectable family: a stable selection id and its complete contract set. */
 export interface ToolFamilyDefinition {
-  readonly id: string;
+  readonly id: ToolFamilyId;
   readonly surface: string;
   readonly contracts: readonly (typeof TOOL_CONTRACTS)[number][];
 }
@@ -154,12 +165,6 @@ export const TOOL_FAMILY_DEFINITIONS = [
   { id: "session", surface: "session", contracts: SESSION_TOOL_CONTRACTS },
 ] as const satisfies readonly ToolFamilyDefinition[];
 
-export type ToolFamilyId = (typeof TOOL_FAMILY_DEFINITIONS)[number]["id"];
-
-/** Stable selection ids in catalog order. */
-export const TOOL_FAMILY_IDS: readonly ToolFamilyId[] =
-  TOOL_FAMILY_DEFINITIONS.map(({ id }) => id);
-
 const familyByTool = new Map<string, ToolFamilyId>();
 for (const { id, contracts } of TOOL_FAMILY_DEFINITIONS)
   for (const contract of contracts) familyByTool.set(contract.name, id);
@@ -181,7 +186,3 @@ export const contractsForToolFamilies = (
         const family = toolFamilyId(name);
         return family !== undefined && selection.has(family);
       });
-
-/** Whether a parsed selection value names a published tool family. */
-export const isToolFamilyId = (value: string): value is ToolFamilyId =>
-  (TOOL_FAMILY_IDS as readonly string[]).includes(value);

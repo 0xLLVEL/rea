@@ -24,6 +24,7 @@ const scopedServer = (
     new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
     undefined,
     false,
+    undefined,
     advertisedToolFamilies,
   );
 

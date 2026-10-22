@@ -4,7 +4,7 @@ import {
   isToolFamilyId,
   TOOL_FAMILY_IDS,
   type ToolFamilyId,
-} from "../contracts/toolFamilies.js";
+} from "../contracts/toolFamilyIds.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 

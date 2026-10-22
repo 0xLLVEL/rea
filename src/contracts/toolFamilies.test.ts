@@ -9,6 +9,12 @@ import {
 import { TOOL_CONTRACTS } from "./toolContracts.js";
 
 describe("tool families", () => {
+  it("declares exactly one definition per published id", () => {
+    expect(TOOL_FAMILY_DEFINITIONS.map(({ id }) => id)).toEqual([
+      ...TOOL_FAMILY_IDS,
+    ]);
+  });
+
   it("covers every contract exactly once", () => {
     const owners = new Map<string, string[]>();
     for (const { id, contracts } of TOOL_FAMILY_DEFINITIONS)
