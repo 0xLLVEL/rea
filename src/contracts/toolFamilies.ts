@@ -14,6 +14,9 @@ import { REVERSE_ENGINEERING_TOOL_CONTRACTS } from "./reverseEngineeringToolCont
 import { GDB_TOOL_CONTRACTS } from "./gdbToolContracts.js";
 import { RIZIN_DEBUG_TOOL_CONTRACTS } from "./rizinDebugToolContracts.js";
 import { ARTIFACT_TOOL_CONTRACTS } from "./artifactToolContracts.js";
+import { APK_SIGNATURE_TOOL_CONTRACTS } from "./apkSignature/apkSignatureToolContracts.js";
+import { ERLANG_BEAM_TOOL_CONTRACTS } from "./erlang/beamToolContracts.js";
+import { PYTHON_PYC_TOOL_CONTRACTS } from "./python/pythonPycToolContracts.js";
 import { DESKTOP_APPLICATION_TOOL_CONTRACTS } from "./desktopApplicationToolContracts.js";
 import { IL2CPP_TOOL_CONTRACTS } from "./il2cpp/il2cppToolContracts.js";
 import { MODEL_TOOL_CONTRACTS } from "./model/modelToolContracts.js";
@@ -94,7 +97,10 @@ export const TOOL_FAMILY_DEFINITIONS = [
       ...IL2CPP_TOOL_CONTRACTS,
       ...MODEL_TOOL_CONTRACTS,
       ...RUST_TOOL_CONTRACTS,
+      ...PYTHON_PYC_TOOL_CONTRACTS,
+      ...ERLANG_BEAM_TOOL_CONTRACTS,
       ...WASM_TOOL_CONTRACTS,
+      ...APK_SIGNATURE_TOOL_CONTRACTS,
       ...SQLITE_TOOL_CONTRACTS,
       ...CAPTURE_TOOL_CONTRACTS,
       ...SIGNAL_TOOL_CONTRACTS,
