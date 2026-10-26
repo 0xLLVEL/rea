@@ -55,6 +55,7 @@ const componentFactsKey = (component: ManifestComponent): string =>
     component.permission_source,
     component.permission_overrides,
     component.path_permissions,
+    component.intent_filter_count,
     component.actions,
     component.categories,
     component.foreground_service_type,

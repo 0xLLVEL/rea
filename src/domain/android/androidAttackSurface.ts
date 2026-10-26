@@ -10,6 +10,13 @@ const ATTACK_SURFACE_COMPONENT_LIMIT = 1000;
 /** Intent-filter entries projected per component before a selection is split. */
 const ATTACK_SURFACE_ACTION_LIMIT = 128;
 
+/**
+ * Provider authorities retained per component, matching the producing parser's
+ * cap in AndroidManifestComponents, so a schema-valid selection can never
+ * carry more authorities than the inventory that reported it.
+ */
+const ATTACK_SURFACE_AUTHORITY_LIMIT = 64;
+
 /** JVM constant-pool text limit for one class name, action or permission value. */
 const ATTACK_SURFACE_TEXT_LIMIT = 65_535;
 
@@ -41,7 +48,13 @@ const attackSurfaceComponentSchema = androidManifestComponentSchema.extend({
     .array(z.string().max(ATTACK_SURFACE_TEXT_LIMIT))
     .max(ATTACK_SURFACE_ACTION_LIMIT),
   foreground_service_type: z.string().max(ATTACK_SURFACE_TEXT_LIMIT).nullable(),
-  authorities: z.array(z.string().max(ATTACK_SURFACE_TEXT_LIMIT)).nullable(),
+  authorities: z
+    .array(z.string().max(ATTACK_SURFACE_TEXT_LIMIT))
+    .max(ATTACK_SURFACE_AUTHORITY_LIMIT)
+    .nullable()
+    .describe(
+      `At most ${String(ATTACK_SURFACE_AUTHORITY_LIMIT)} authorities per provider`,
+    ),
   target_activity: z.string().max(ATTACK_SURFACE_TEXT_LIMIT).nullable(),
 });
 
@@ -124,12 +137,12 @@ export const androidAttackSurfaceInputSchema = z
       if (
         (component.permission_source === "component" ||
           component.permission_source === "application") &&
-        component.permission === null
+        (component.permission === null || component.permission.length === 0)
       )
         context.addIssue({
           code: "custom",
           path: [...path],
-          message: `permission_source "${component.permission_source}" requires the permission value it established; report the unresolved value as source "unknown" with permission null, or "none" with permission null`,
+          message: `permission_source "${component.permission_source}" requires the permission value it established; report an empty or unresolved value as source "unknown" with permission null, or "none" with permission null`,
         });
       if (
         component.permission_source !== "component" &&

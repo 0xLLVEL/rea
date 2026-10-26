@@ -330,6 +330,25 @@ describe("projectAttackSurface permission provenance", () => {
       }),
     ).toThrow(/requires permission_source/u);
   });
+
+  it("rejects an empty established permission instead of emitting a guard", () => {
+    // The producing parser normalizes an explicit empty permission to null with
+    // source "none", so an established source with "" is not a guard value.
+    expect(() =>
+      projectAttackSurface({
+        ...facts,
+        components: [
+          component({
+            kind: "activity",
+            name: "io.example.EmptyGuard",
+            exported: true,
+            permission: "",
+            permission_source: "component",
+          }),
+        ],
+      }),
+    ).toThrow(/requires the permission value/u);
+  });
 });
 
 describe("projectAttackSurface budgets", () => {
@@ -354,6 +373,24 @@ describe("projectAttackSurface budgets", () => {
         ),
       }),
     ).toThrow(/declaration text is/u);
+    // Empty authorities add nothing to the text budgets, so the producing
+    // parser's per-provider cap is what bounds the retained selection.
+    expect(() =>
+      projectAttackSurface({
+        ...facts,
+        components: [
+          component({
+            kind: "provider",
+            name: "io.example.ManyAuthorities",
+            exported: true,
+            authorities: Array.from(
+              { length: 65 },
+              (_, index) => `io.example.auth${String(index)}`,
+            ),
+          }),
+        ],
+      }),
+    ).toThrow(/64/u);
   });
 
   it("bounds the projected findings before building them", () => {

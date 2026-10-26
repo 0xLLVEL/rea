@@ -203,6 +203,19 @@ describe("projectAndroidAttackSurfaceEvidence with a linked source", () => {
     });
   });
 
+  it("refuses an edited intent filter count the inventory did not report", () => {
+    const result = projectAndroidAttackSurfaceEvidence({
+      package_name: "io.example",
+      components: [{ ...component, intent_filter_count: 9 }],
+      component_coverage: "complete",
+      source_evidence: packageEvidence(),
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisInputError" },
+    });
+  });
+
   it("refuses a complete claim over a partial linked inventory", () => {
     const result = projectAndroidAttackSurfaceEvidence({
       package_name: "io.example",

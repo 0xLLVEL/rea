@@ -137,11 +137,13 @@ const mangledLength = (value: string): number => {
 /** Characters the projection would emit for one selection, counted cheaply. */
 const projectedSymbolLength = (input: AndroidJniNamesInput): number => {
   const classPart = mangledLength(input.class_name.replaceAll(".", "/"));
-  let total = 0;
+  // The result echoes the raw class name once at the top level.
+  let total = input.class_name.length;
   for (const method of input.methods) {
     const methodPart = mangledLength(method.method_name);
     const shortName = JNI_SYMBOL_PREFIX_LENGTH + classPart + 1 + methodPart;
-    total += shortName + method.method_name.length;
+    // The raw name is emitted twice: method_name and jna_expected_name.
+    total += shortName + 2 * method.method_name.length;
     if (method.dex_descriptor !== null && method.dex_descriptor !== undefined) {
       const descriptor = method.dex_descriptor;
       const args = descriptor.slice(1, descriptor.indexOf(")"));

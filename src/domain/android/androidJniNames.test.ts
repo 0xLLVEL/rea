@@ -183,6 +183,22 @@ describe("projectJniNames bounds and unknowns", () => {
     ).toThrow(/are produced per call/u);
   });
 
+  it("counts the raw method name wherever the result emits it", () => {
+    const rows = (count: number): { method_name: string }[] =>
+      Array.from({ length: count }, () => ({
+        method_name: "m".repeat(65_535),
+      }));
+    // 31 rows pass a budget that counts method_name once, but each row emits it
+    // again as jna_expected_name, so the response would exceed the budget.
+    expect(() =>
+      projectJniNames({ class_name: "C", methods: rows(31) }),
+    ).toThrow(/are produced per call/u);
+    // The largest selection that still fits the budget stays accepted.
+    expect(
+      projectJniNames({ class_name: "C", methods: rows(21) }).methods,
+    ).toHaveLength(21);
+  });
+
   it("accepts a long class name while the projection stays within budget", () => {
     const result = projectJniNames({
       class_name: "c".repeat(60_000),
