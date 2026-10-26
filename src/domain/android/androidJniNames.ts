@@ -101,6 +101,13 @@ export const SELECTION_SCOPED_OVERLOADS_NOTE =
 export const MISSING_DESCRIPTOR_NOTE =
   "Methods without a dex_descriptor report only the short name; supply the dex_descriptor that inspect_android_class reports per method to get the long name.";
 
+/**
+ * Guidance for `jna_expected_name`: it is the default JNA lookup spelling.
+ * A custom `FunctionMapper` or an explicitly named function maps elsewhere.
+ */
+export const JNA_DEFAULT_MAPPING_NOTE =
+  "jna_expected_name is the symbol JNA's default mapper derives from the DEX method name; a custom FunctionMapper or an explicitly named native function maps to another symbol and is not represented here.";
+
 /** Guidance for identities copied from decompiler display names. */
 export const DISPLAY_NAME_NOTE =
   "Supply raw DEX identities: inspect_android_class reports each method's dex_method_name and the class's dex_class_name, because its display names can be decompiler aliases or dotted nested names that do not match a native export.";
@@ -215,6 +222,7 @@ export const projectJniNames = (
       STATIC_EXPORT_ONLY_NOTE,
       NAME_MATCH_NOTE,
       SELECTION_SCOPED_OVERLOADS_NOTE,
+      JNA_DEFAULT_MAPPING_NOTE,
       DISPLAY_NAME_NOTE,
       ...(methods.some((method) => method.dex_descriptor === null)
         ? [MISSING_DESCRIPTOR_NOTE]

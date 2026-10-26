@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   DISPLAY_NAME_NOTE,
+  JNA_DEFAULT_MAPPING_NOTE,
   MISSING_DESCRIPTOR_NOTE,
   projectJniNames,
   SELECTION_SCOPED_OVERLOADS_NOTE,
@@ -134,6 +135,7 @@ describe("projectJniNames bounds and unknowns", () => {
       expect.arrayContaining([
         STATIC_EXPORT_ONLY_NOTE,
         SELECTION_SCOPED_OVERLOADS_NOTE,
+        JNA_DEFAULT_MAPPING_NOTE,
         DISPLAY_NAME_NOTE,
       ]),
     );

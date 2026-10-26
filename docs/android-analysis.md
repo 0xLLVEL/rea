@@ -178,9 +178,12 @@ rea project-android-jni-names '{"class_name": "example.MainActivity", "methods":
 ```
 
 Equivalent MCP method is `project_android_jni_names`. It reports JNI short/long
-names and the JNA exact name per method from caller-selected declarations, so
-an expected `Java_pkg_Class_method` name can be searched in an extracted `.so`
-with the native providers. Feed raw DEX identities: `inspect-android-class`
+names and the JNA default-mapping name per method from caller-selected
+declarations, so an expected `Java_pkg_Class_method` name can be searched in an
+extracted `.so` with the native providers. `jna_expected_name` is the symbol
+JNA's default mapper derives from the DEX method name; a custom `FunctionMapper`
+or an explicitly named native function binds another symbol, which stays
+unknown. Feed raw DEX identities: `inspect-android-class`
 reports each method's `dex_method_name` and the class's `dex_class_name`, which
 is the binary `$` form for nested classes. Its `class_name` and method `name`
 stay as decompiler display names and can be aliases, so symbols projected from
@@ -196,12 +199,17 @@ prefix makes the real bound; split a larger selection by class or method group.
 Feed the `components` that `inspect-android-package` returns into
 `project_android_attack_surface` to separate exported components without an
 established guard from guarded ones. Components whose permission value is
-unresolved, and providers with projected `readPermission`/`writePermission`
+unresolved, and every provider with projected `readPermission`/`writePermission`
 overrides (or an inventory that predates `permission_overrides`), stay in a
-guard-unknown bucket rather than being called unguarded. It also indexes intent
-actions and reports foreground-service types and provider authorities. Findings
-rank static declarations only; protection levels, reachability and
-exploitability stay unknown.
+guard-unknown bucket rather than being called unguarded: an override replaces or
+clears the base permission for one operation, and its value is not projected. It
+also indexes intent actions and reports foreground-service types and provider
+authorities. A call accepts at most 1000 components, 128 actions or categories
+per component, about 1 MiB of selected declaration text and about 4 MiB of
+projected finding text; pass a subset and describe it with
+`component_coverage=partial` for a larger inventory. Findings rank static
+declarations only; protection levels, reachability and exploitability stay
+unknown.
 
 For packed or split targets, follow the
 [packed and split APK playbook](android-packed-analysis.md): static pack

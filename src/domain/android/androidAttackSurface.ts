@@ -3,12 +3,128 @@ import { z } from "zod";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { androidManifestComponentSchema } from "./androidAnalysis.js";
 
-/** Caller-selected package facts, mirroring inspect_android_package declarations. */
-export const androidAttackSurfaceInputSchema = z.strictObject({
-  package_name: z.string().nullable(),
-  components: z.array(androidManifestComponentSchema),
-  component_coverage: z.enum(["complete", "partial", "unknown"]),
+/** One request projects at most this many components. */
+const ATTACK_SURFACE_COMPONENT_LIMIT = 1000;
+
+/** Intent-filter entries projected per component before a selection is split. */
+const ATTACK_SURFACE_ACTION_LIMIT = 128;
+
+/** JVM constant-pool text limit for one class name, action or permission value. */
+const ATTACK_SURFACE_TEXT_LIMIT = 65_535;
+
+/**
+ * Caller-selected declaration text allowed per call. Every string is repeated
+ * in the findings, the action index and Evidence, so the aggregate is bounded
+ * before the projection allocates any of it.
+ */
+const ATTACK_SURFACE_INPUT_TEXT_LIMIT = 1_048_576;
+
+/** Projected response text allowed per call, counted before any finding exists. */
+const ATTACK_SURFACE_OUTPUT_TEXT_LIMIT = 4_194_304;
+
+/** Fixed keys and enum values one finding carries besides its selected values. */
+const ATTACK_SURFACE_FINDING_OVERHEAD = 256;
+
+/** One inventory component with each caller-selected field bounded. */
+const attackSurfaceComponentSchema = androidManifestComponentSchema.extend({
+  declared_name: z.string().max(ATTACK_SURFACE_TEXT_LIMIT),
+  name: z.string().max(ATTACK_SURFACE_TEXT_LIMIT),
+  permission: z.string().max(ATTACK_SURFACE_TEXT_LIMIT).nullable(),
+  actions: z
+    .array(z.string().max(ATTACK_SURFACE_TEXT_LIMIT))
+    .max(ATTACK_SURFACE_ACTION_LIMIT)
+    .describe(
+      `At most ${String(ATTACK_SURFACE_ACTION_LIMIT)} actions per component`,
+    ),
+  categories: z
+    .array(z.string().max(ATTACK_SURFACE_TEXT_LIMIT))
+    .max(ATTACK_SURFACE_ACTION_LIMIT),
+  foreground_service_type: z.string().max(ATTACK_SURFACE_TEXT_LIMIT).nullable(),
+  authorities: z.array(z.string().max(ATTACK_SURFACE_TEXT_LIMIT)).nullable(),
+  target_activity: z.string().max(ATTACK_SURFACE_TEXT_LIMIT).nullable(),
 });
+
+/** Characters the selection repeats in findings, the index and Evidence. */
+const selectedTextLength = (input: AndroidAttackSurfaceInput): number => {
+  let total = input.package_name?.length ?? 0;
+  for (const component of input.components) {
+    total +=
+      component.declared_name.length +
+      component.name.length +
+      (component.permission?.length ?? 0) +
+      (component.foreground_service_type?.length ?? 0) +
+      (component.target_activity?.length ?? 0) +
+      component.actions.reduce((sum, action) => sum + action.length, 0) +
+      component.categories.reduce((sum, category) => sum + category.length, 0) +
+      (component.authorities ?? []).reduce(
+        (sum, authority) => sum + authority.length,
+        0,
+      );
+  }
+  return total;
+};
+
+/**
+ * Characters the projection would emit, counted without building a finding.
+ * A component name appears in its finding, in every action-index entry that
+ * repeats it, and once in the authority or service-type list, so the input
+ * size does not bound the response.
+ */
+const projectedTextLength = (input: AndroidAttackSurfaceInput): number => {
+  let total = input.package_name?.length ?? 0;
+  for (const component of input.components) {
+    const actionLength = component.actions.reduce(
+      (sum, action) => sum + action.length,
+      0,
+    );
+    const nameLength = component.declared_name.length + component.name.length;
+    // The finding repeats the names once, and each action once with its name.
+    total +=
+      nameLength +
+      (component.permission?.length ?? 0) +
+      actionLength +
+      ATTACK_SURFACE_FINDING_OVERHEAD;
+    // The action index repeats every action with the component name.
+    total += actionLength + component.actions.length * component.name.length;
+    // Provider authorities and service types repeat beside the findings.
+    total +=
+      (component.foreground_service_type?.length ?? 0) +
+      (component.authorities ?? []).reduce(
+        (sum, authority) => sum + authority.length,
+        0,
+      );
+  }
+  return total;
+};
+
+/** Caller-selected package facts, mirroring inspect_android_package declarations. */
+export const androidAttackSurfaceInputSchema = z
+  .strictObject({
+    package_name: z.string().max(ATTACK_SURFACE_TEXT_LIMIT).nullable(),
+    components: z
+      .array(attackSurfaceComponentSchema)
+      .max(ATTACK_SURFACE_COMPONENT_LIMIT)
+      .describe(
+        `At most ${String(ATTACK_SURFACE_COMPONENT_LIMIT)} components per call; pass a subset with component_coverage=partial to rank a larger inventory`,
+      ),
+    component_coverage: z.enum(["complete", "partial", "unknown"]),
+  })
+  .superRefine((input, context) => {
+    const selected = selectedTextLength(input);
+    if (selected > ATTACK_SURFACE_INPUT_TEXT_LIMIT)
+      context.addIssue({
+        code: "custom",
+        path: ["components"],
+        message: `Selected declaration text is ${String(selected)} characters; at most ${String(ATTACK_SURFACE_INPUT_TEXT_LIMIT)} are accepted per call. Shorten the component names, actions or authorities, or pass a subset with component_coverage=partial.`,
+      });
+    const projected = projectedTextLength(input);
+    if (projected > ATTACK_SURFACE_OUTPUT_TEXT_LIMIT)
+      context.addIssue({
+        code: "custom",
+        path: ["components"],
+        message: `Projected finding text is ${String(projected)} characters; at most ${String(ATTACK_SURFACE_OUTPUT_TEXT_LIMIT)} are produced per call. Pass fewer components or fewer actions per component, with component_coverage describing the subset.`,
+      });
+  });
 
 /** One exported component with its guard and trigger summary. */
 export const attackSurfaceFindingSchema = z.strictObject({
@@ -73,7 +189,7 @@ export const UNRESOLVED_GUARD_NOTE =
 
 /** Finding note for an exported provider whose operation-specific guards are not projected. */
 export const PROVIDER_OVERRIDE_NOTE =
-  "Exported; provider readPermission/writePermission overrides are not projected, so absence of a guard is not established.";
+  "Exported; provider readPermission/writePermission overrides are projected only as present, so neither their value nor the absence of an operation guard is established.";
 
 /** Explanation of unresolved permission values counted in this result. */
 export const unresolvedGuardUnknown = (count: number): string =>
@@ -81,7 +197,7 @@ export const unresolvedGuardUnknown = (count: number): string =>
 
 /** Explanation of exported providers kept guard-unknown by unprojected overrides. */
 export const providerOverrideUnknown = (count: number): string =>
-  `${String(count)} exported provider(s) have no established projected guard; operation-specific readPermission/writePermission overrides are not projected, so they stay guard-unknown.`;
+  `${String(count)} exported provider(s) declare android:readPermission or android:writePermission; those override values are not projected, so they stay guard-unknown even where a base permission is declared.`;
 
 /** Explanation of incomplete component coverage. */
 export const coverageUnknown = (coverage: string): string =>
@@ -154,6 +270,15 @@ export const projectAttackSurface = (
     }
     if (!exported) continue;
     if (
+      component.kind === "provider" &&
+      component.permission_overrides !== "none"
+    ) {
+      // The producer projects whether readPermission/writePermission exist but
+      // not their values. An override replaces or clears the base permission
+      // for one operation, so the base value does not establish the guard.
+      providerOverrideGuards += 1;
+      guardUnknown.push(toFinding(component, PROVIDER_OVERRIDE_NOTE));
+    } else if (
       component.permission_source === "component" ||
       component.permission_source === "application"
     ) {
@@ -163,14 +288,6 @@ export const projectAttackSurface = (
     } else if (component.permission_source === "unknown") {
       unresolvedGuards += 1;
       guardUnknown.push(toFinding(component, UNRESOLVED_GUARD_NOTE));
-    } else if (
-      component.kind === "provider" &&
-      component.permission_overrides !== "none"
-    ) {
-      // The producer projects whether readPermission/writePermission exist but
-      // not their values, so a provider without a base permission is unproven.
-      providerOverrideGuards += 1;
-      guardUnknown.push(toFinding(component, PROVIDER_OVERRIDE_NOTE));
     } else {
       exportedWithout.push(toFinding(component, UNGUARDED_COMPONENT_NOTE));
     }

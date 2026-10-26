@@ -5,6 +5,7 @@ import {
   ANDROID_ATTACK_SURFACE_UNKNOWNS,
   coverageUnknown,
   projectAttackSurface,
+  PROVIDER_OVERRIDE_NOTE,
   providerOverrideUnknown,
   UNGUARDED_COMPONENT_NOTE,
   UNRESOLVED_GUARD_NOTE,
@@ -181,6 +182,50 @@ describe("projectAttackSurface", () => {
     ]);
   });
 
+  it("keeps a provider with a base permission and an override guard-unknown", () => {
+    const result = projectAttackSurface({
+      ...facts,
+      components: [
+        component({
+          kind: "provider",
+          name: "io.example.Base",
+          exported: true,
+          permission: "io.example.permission.BASE",
+          permission_source: "component",
+          permission_overrides: "read",
+        }),
+        component({
+          kind: "provider",
+          name: "io.example.BaseOnly",
+          exported: true,
+          permission: "io.example.permission.BASE",
+          permission_source: "component",
+        }),
+      ],
+    });
+    // The override can clear or replace the base value for one operation, so
+    // the base permission does not establish the exported provider's guard.
+    expect(result.exported_guarded.map((f) => f.resolved_name)).toEqual([
+      "io.example.BaseOnly",
+    ]);
+    expect(
+      result.exported_guard_unknown.map((f) => [
+        f.resolved_name,
+        f.permission,
+        f.permission_overrides,
+        f.note,
+      ]),
+    ).toEqual([
+      [
+        "io.example.Base",
+        "io.example.permission.BASE",
+        "read",
+        PROVIDER_OVERRIDE_NOTE,
+      ],
+    ]);
+    expect(result.exported_without_permission).toEqual([]);
+  });
+
   it("reports an exported provider as unguarded only without projected overrides", () => {
     const result = projectAttackSurface({
       ...facts,
@@ -205,5 +250,48 @@ describe("projectAttackSurface", () => {
       "io.example.Stale",
     ]);
     expect(result.unknowns).toContain(providerOverrideUnknown(1));
+  });
+});
+
+describe("projectAttackSurface budgets", () => {
+  it("rejects a selection that exceeds the component or text budget", () => {
+    expect(() =>
+      projectAttackSurface({
+        ...facts,
+        components: Array.from({ length: 1001 }, (_, index) =>
+          component({ kind: "activity", name: `io.example.C${String(index)}` }),
+        ),
+      }),
+    ).toThrow(/1000/u);
+    expect(() =>
+      projectAttackSurface({
+        ...facts,
+        components: Array.from({ length: 32 }, () =>
+          component({
+            kind: "activity",
+            name: "io.example.Long",
+            actions: Array.from({ length: 128 }, () => "a".repeat(60_000)),
+          }),
+        ),
+      }),
+    ).toThrow(/declaration text is/u);
+  });
+
+  it("bounds the projected findings before building them", () => {
+    // A selected name that stays inside every input budget is repeated once per
+    // action in the index, so the response budget rejects it before allocation.
+    expect(() =>
+      projectAttackSurface({
+        ...facts,
+        components: [
+          component({
+            kind: "activity",
+            name: "n".repeat(60_000),
+            exported: true,
+            actions: Array.from({ length: 128 }, () => "a"),
+          }),
+        ],
+      }),
+    ).toThrow(/Projected finding text is/u);
   });
 });

@@ -16,9 +16,12 @@ Run the static chain first:
 ```sh
 rea inspect-android-package /targets/Example.apk
 rea inspect-android-class /targets/Example.apk com.example.MainActivity
+rea inspect-android-method /targets/Example.apk com.example.MainActivity onCreate
 ```
 
-Pack signals: `body_status: "not_available"` on app classes, a custom
+Pack signals: `body_status: "not_available"` from `inspect-android-method` on
+app methods (`inspect-android-class` lists the methods to select; add
+`--overload-index` when a name repeats), a custom
 `Application` subclass with `attachBaseContext`, few DEX classes against a
 large APK, and a native loader library in `lib/<abi>/`. Record these as the
 reason the code inventory is incomplete. If the APK is not packed, continue
