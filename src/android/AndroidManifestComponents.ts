@@ -56,6 +56,8 @@ export interface AndroidManifestComponent {
   readonly permission: string | null;
   /** Source of the effective permission projection; unknown when its copy is capped. */
   readonly permission_source: "component" | "application" | "none" | "unknown";
+  /** Declared provider android:readPermission/android:writePermission presence; none for other kinds. */
+  readonly permission_overrides: "none" | "read" | "write" | "read-write";
   readonly intent_filter_count: number;
   readonly actions: readonly string[];
   readonly categories: readonly string[];
@@ -436,12 +438,22 @@ export const parseAndroidManifestComponents = (
         }
       }
       let authorities: readonly string[] | null = null;
+      let permissionOverrides: "none" | "read" | "write" | "read-write" =
+        "none";
       if (component.nodeName === "provider") {
-        if (
-          androidAttribute(component, "readPermission") !== null ||
-          androidAttribute(component, "writePermission") !== null
-        )
+        const readOverride =
+          androidAttribute(component, "readPermission") !== null;
+        const writeOverride =
+          androidAttribute(component, "writePermission") !== null;
+        if (readOverride || writeOverride)
           providerPermissionOverridesUnknown += 1;
+        permissionOverrides = readOverride
+          ? writeOverride
+            ? "read-write"
+            : "read"
+          : writeOverride
+            ? "write"
+            : "none";
         const declaredAuthorities = androidAttribute(component, "authorities");
         if (declaredAuthorities !== null) {
           const split = providerAuthorities(
@@ -585,6 +597,7 @@ export const parseAndroidManifestComponents = (
               : filters.length > 0,
         permission,
         permission_source: effectivePermissionSource,
+        permission_overrides: permissionOverrides,
         intent_filter_count: filters.length,
         actions: collected.actions,
         categories: collected.categories,

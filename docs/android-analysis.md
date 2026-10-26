@@ -180,22 +180,28 @@ rea project-android-jni-names '{"class_name": "example.MainActivity", "methods":
 Equivalent MCP method is `project_android_jni_names`. It reports JNI short/long
 names and the JNA exact name per method from caller-selected declarations, so
 an expected `Java_pkg_Class_method` name can be searched in an extracted `.so`
-with the native providers. Pass the `dex_descriptor` that
-`inspect-android-class` reports for each method; it may be omitted, and an
-omitted descriptor reports only the short name, which no longer identifies one
-overload. Nested classes need the binary `$` form. A name match is a static
-binding hypothesis, not proof of loading or invocation; `RegisterNatives`
-registration stays unknown. At most 2000 methods per call; split a larger
-selection by class or method group.
+with the native providers. Feed raw DEX identities: `inspect-android-class`
+reports each method's `dex_method_name` and the class's `dex_class_name`, which
+is the binary `$` form for nested classes. Its `class_name` and method `name`
+stay as decompiler display names and can be aliases, so symbols projected from
+them need not exist. Pass the method's `dex_descriptor` too; it may be omitted,
+and an omitted descriptor reports only the short name, which no longer
+identifies one overload. `overload_group_size` counts the distinct descriptors
+in your selection, so a partial selection under-reports the class's overloads.
+A name match is a static binding hypothesis, not proof of loading or
+invocation; `RegisterNatives` registration stays unknown. A call accepts at most
+2000 methods and 1 MiB of selection text; split a larger selection by class or
+method group.
 
 Feed the `components` that `inspect-android-package` returns into
 `project_android_attack_surface` to separate exported components without an
-established guard from guarded ones, keeping components whose permission value
-is unresolved, and providers that rely on `readPermission`/`writePermission`
-overrides, in a guard-unknown bucket. It also indexes intent actions and reports
-foreground-service types and provider authorities. Findings rank static
-declarations only; protection levels, reachability and exploitability stay
-unknown.
+established guard from guarded ones. Components whose permission value is
+unresolved, and providers with projected `readPermission`/`writePermission`
+overrides (or an inventory that predates `permission_overrides`), stay in a
+guard-unknown bucket rather than being called unguarded. It also indexes intent
+actions and reports foreground-service types and provider authorities. Findings
+rank static declarations only; protection levels, reachability and
+exploitability stay unknown.
 
 For packed or split targets, follow the
 [packed and split APK playbook](android-packed-analysis.md): static pack
@@ -275,9 +281,10 @@ the same source byte limit and explicit truncation reporting.
   `unavailable`), `items` and `limitations`: each item names its `kind`,
   `declared_name` and resolved `name`, the declared `exported` value beside
   Android's `exported_default` rule, the effective `permission` with its
-  `permission_source`, flattened intent-filter `actions` and `categories`,
-  `foreground_service_type`, provider `authorities`, and an explicit
-  `intent_filter_count`.
+  `permission_source`, whether a provider declares `readPermission`/
+  `writePermission` overrides as `permission_overrides`, flattened
+  intent-filter `actions` and `categories`, `foreground_service_type`, provider
+  `authorities`, and an explicit `intent_filter_count`.
   Signature verification is explicitly `not_performed`.
 - Class search filters the engine's cached top-level names before transferring
   pages, then follows contiguous inventory positions without rescanning earlier
@@ -297,12 +304,14 @@ the same source byte limit and explicit truncation reporting.
   anonymous classes. The bridge keeps both identities from JADX; it does not
   replace separators or guess suffix matches. Ambiguous selectors are refused.
   Follow-up calls preserve the selected name, while results report the frozen
-  JADX display name. Quote `$` names in the shell, for example
-  `'com.example.Manager$WorkerThread'`.
+  JADX display name and the raw DEX identities beside it: `dex_class_name` for
+  the binary class name and `dex_method_name` for each method. Quote `$` names
+  in the shell, for example `'com.example.Manager$WorkerThread'`.
   Exact DEX prototypes are reported from frozen JADX method metadata as
-  `dex_descriptor`, for example `(I)V`. Display names can be JADX aliases;
-  the descriptor alone is not a complete raw DEX method ID. Overload indices
-  are tied to this artifact and engine, not stable identities across builds.
+  `dex_descriptor`, for example `(I)V`. Display names can be JADX aliases, so
+  match native exports against `dex_class_name`/`dex_method_name` and the
+  descriptor rather than the display name. Overload indices are tied to this
+  artifact and engine, not stable identities across builds.
 - Method inspection reports Java or smali, fallback markers and complete/partial
   returned text. Decompiled source is a derived representation. A complete text
   result does not establish complete semantics or a byte-identical reconstruction.

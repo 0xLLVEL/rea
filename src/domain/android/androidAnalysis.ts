@@ -112,6 +112,13 @@ export const androidManifestComponentSchema = z.strictObject({
   exported_default: z.boolean().nullable(),
   permission: z.string().nullable(),
   permission_source: z.enum(["component", "application", "none", "unknown"]),
+  /**
+   * Provider-level `android:readPermission`/`android:writePermission` overrides.
+   * Older Evidence predates this projection, so an absent value is unknown.
+   */
+  permission_overrides: z
+    .enum(["none", "read", "write", "read-write", "unknown"])
+    .default("unknown"),
   intent_filter_count: z.number().int().nonnegative(),
   actions: z.array(z.string()),
   categories: z.array(z.string()),
@@ -185,6 +192,8 @@ export const dexStaticValueSchema = z.discriminatedUnion("type", [
 
 const method = z.strictObject({
   name: z.string(),
+  /** Raw DEX method name; the display name can be a decompiler alias. */
+  dex_method_name: z.string().min(1),
   reported_signature: z.string(),
   overload_index: z.int().nonnegative(),
   is_constructor: z.boolean(),
@@ -240,6 +249,8 @@ export const androidResultSchemas = {
   inspect_android_class: z.strictObject({
     ...common,
     class_name: z.string(),
+    /** Raw DEX binary class name (`$` for nested classes). */
+    dex_class_name: z.string().min(1),
     methods: z.array(method),
     fields: z.array(
       z.strictObject({

@@ -1,15 +1,21 @@
 import { describe, expect, it } from "vitest";
 
-import { projectJniNames } from "./androidJniNames.js";
+import {
+  DISPLAY_NAME_NOTE,
+  MISSING_DESCRIPTOR_NOTE,
+  projectJniNames,
+  SELECTION_SCOPED_OVERLOADS_NOTE,
+  STATIC_EXPORT_ONLY_NOTE,
+} from "./androidJniNames.js";
 
-/**
- * Short-name goldens for BinaryEye's ZxingCpp come from a real APK
- * (F-Droid de.markusfisch.android.binaryeye vc 180): `inspect-android-class`
- * lists the class and the .so exports carry these exact JNI names.
- * Underscore/array/overload/nested/unicode spellings were verified against
- * `javac -h` on JDK 25 before encoding them here.
- */
-describe("projectJniNames", () => {
+describe("projectJniNames spellings", () => {
+  /**
+   * Short-name goldens for BinaryEye's ZxingCpp come from a real APK
+   * (F-Droid de.markusfisch.android.binaryeye vc 180): `inspect-android-class`
+   * reports the raw DEX identities and the .so exports carry these exact JNI
+   * names. Underscore/array/overload/nested/unicode spellings were verified
+   * against `javac -h` on JDK 25 before encoding them here.
+   */
   it("matches real JNI exports for BinaryEye ZxingCpp methods", () => {
     const result = projectJniNames({
       class_name: "de.markusfisch.android.zxingcpp.ZxingCpp",
@@ -93,14 +99,6 @@ describe("projectJniNames", () => {
     );
   });
 
-  it("keeps dynamic registration and runtime loading unknown", () => {
-    const result = projectJniNames({
-      class_name: "pkg.Cls",
-      methods: [{ method_name: "m", dex_descriptor: "()V" }],
-    });
-    expect(result.unknowns.join(" ")).toContain("RegisterNatives");
-  });
-
   it("reports only the short name for an explicit null descriptor", () => {
     const result = projectJniNames({
       class_name: "pkg.Cls",
@@ -110,9 +108,7 @@ describe("projectJniNames", () => {
       jni_short_name: "Java_pkg_Cls_m",
       jni_long_name: null,
     });
-    expect(result.unknowns.join(" ")).toContain(
-      "dex_descriptor that inspect_android_class reports",
-    );
+    expect(result.unknowns).toContain(MISSING_DESCRIPTOR_NOTE);
   });
 
   it("accepts an omitted descriptor as null", () => {
@@ -125,6 +121,48 @@ describe("projectJniNames", () => {
       jni_short_name: "Java_pkg_Cls_m",
       jni_long_name: null,
     });
+  });
+});
+
+describe("projectJniNames bounds and unknowns", () => {
+  it("keeps dynamic registration, runtime loading and the selection scope unknown", () => {
+    const result = projectJniNames({
+      class_name: "pkg.Cls",
+      methods: [{ method_name: "m", dex_descriptor: "()V" }],
+    });
+    expect(result.unknowns).toEqual(
+      expect.arrayContaining([
+        STATIC_EXPORT_ONLY_NOTE,
+        SELECTION_SCOPED_OVERLOADS_NOTE,
+        DISPLAY_NAME_NOTE,
+      ]),
+    );
+  });
+
+  it("counts an overload group once per distinct selected descriptor", () => {
+    const result = projectJniNames({
+      class_name: "pkg.Cls",
+      methods: [
+        { method_name: "take", dex_descriptor: "(I)V" },
+        { method_name: "take", dex_descriptor: "(I)V" },
+        { method_name: "take" },
+        { method_name: "take" },
+      ],
+    });
+    expect(result.methods.map((method) => method.overload_group_size)).toEqual([
+      2, 2, 2, 2,
+    ]);
+  });
+
+  it("rejects a selection whose text exceeds the aggregate budget", () => {
+    expect(() =>
+      projectJniNames({
+        class_name: "pkg.Cls",
+        methods: Array.from({ length: 20 }, () => ({
+          method_name: "m".repeat(60_000),
+        })),
+      }),
+    ).toThrow(/bytes are projected per call/u);
   });
 
   it("bounds one call's method selection", () => {

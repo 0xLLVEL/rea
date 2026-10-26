@@ -16,14 +16,20 @@ Run the static chain first:
 ```sh
 rea inspect-android-package /targets/Example.apk
 rea inspect-android-class /targets/Example.apk com.example.MainActivity
-rea project-android-attack-surface '{"package_name": "com.example", "components": [], "component_coverage": "complete"}'
 ```
 
 Pack signals: `body_status: "not_available"` on app classes, a custom
 `Application` subclass with `attachBaseContext`, few DEX classes against a
 large APK, and a native loader library in `lib/<abi>/`. Record these as the
-reason the static inventory is incomplete. If the APK is not packed, continue
+reason the code inventory is incomplete. If the APK is not packed, continue
 with the ordinary static workflow.
+
+To rank what remains readable, feed the `components.items` and
+`components.status` that `inspect-android-package` returned into
+`project_android_attack_surface` as `components` and `component_coverage`
+(mapping `unavailable` to `unknown`). Do not pass an empty list with `complete`:
+the projection copies your coverage and reports components absent when it has
+none.
 
 ## 2. Acquire the full split set
 
@@ -43,11 +49,12 @@ and keep per-file digests in Evidence.
 
 ## 3. Report the gap instead of closing it
 
-The static inventory of a packed APK is `partial`, and
-`project_android_attack_surface` propagates that coverage instead of claiming
-absence. Report the pack signals, the split set you acquired, and the classes
-you could not read. Keep the offset between the static view and the real
-implementation explicit rather than filling it in.
+Two gaps stay separate here. Component coverage comes from the decoded
+manifest and is `complete` for a packed APK whose manifest parsed fully; it says
+nothing about DEX bodies. Code coverage is what packing damages: the classes you
+could read are a subset of the app. Report the pack signals, the split set you
+acquired, and the classes you could not read, and keep the component inventory's
+own status beside them instead of deriving either from the other.
 
 REA does document the instrumentation surface it does have, including Frida
 sessions with caller-authored scripts, in

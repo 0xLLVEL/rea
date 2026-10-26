@@ -18,6 +18,13 @@ export const attackSurfaceFindingSchema = z.strictObject({
   exported_source: z.enum(["explicit", "implicit", "unknown"]),
   permission: z.string().nullable(),
   permission_source: z.enum(["component", "application", "none", "unknown"]),
+  permission_overrides: z.enum([
+    "none",
+    "read",
+    "write",
+    "read-write",
+    "unknown",
+  ]),
   intent_actions: z.array(z.string()),
   note: z.string(),
 });
@@ -50,6 +57,36 @@ export type AndroidAttackSurfaceResult = z.infer<
   typeof androidAttackSurfaceResultSchema
 >;
 
+/** Findings that hold for every projection of static declarations. */
+export const ANDROID_ATTACK_SURFACE_UNKNOWNS = [
+  "Permission declarations do not establish protection levels or runtime enforcement.",
+  "Reachability through intents, tasks, and deep links was not traced; listed triggers are static declarations.",
+] as const;
+
+/** Finding note for an exported component with no established guard. */
+export const UNGUARDED_COMPONENT_NOTE =
+  "Exported without a guarding permission.";
+
+/** Finding note for an exported component whose permission value is unresolved. */
+export const UNRESOLVED_GUARD_NOTE =
+  "Exported; the guarding permission is unresolved, so absence of a guard is not established.";
+
+/** Finding note for an exported provider whose operation-specific guards are not projected. */
+export const PROVIDER_OVERRIDE_NOTE =
+  "Exported; provider readPermission/writePermission overrides are not projected, so absence of a guard is not established.";
+
+/** Explanation of unresolved permission values counted in this result. */
+export const unresolvedGuardUnknown = (count: number): string =>
+  `${String(count)} exported component(s) have an unresolved permission value; they stay guard-unknown rather than unguarded.`;
+
+/** Explanation of exported providers kept guard-unknown by unprojected overrides. */
+export const providerOverrideUnknown = (count: number): string =>
+  `${String(count)} exported provider(s) have no established projected guard; operation-specific readPermission/writePermission overrides are not projected, so they stay guard-unknown.`;
+
+/** Explanation of incomplete component coverage. */
+export const coverageUnknown = (coverage: string): string =>
+  `Component inventory coverage is ${coverage}; absence of a finding is unknown.`;
+
 /** How the effective export state was established: declared, defaulted, or unresolved. */
 const exportedSource = (
   component: z.infer<typeof androidManifestComponentSchema>,
@@ -70,6 +107,7 @@ const toFinding = (
   exported_source: exportedSource(component),
   permission: component.permission,
   permission_source: component.permission_source,
+  permission_overrides: component.permission_overrides,
   intent_actions: [...component.actions],
   note,
 });
@@ -124,47 +162,26 @@ export const projectAttackSurface = (
       );
     } else if (component.permission_source === "unknown") {
       unresolvedGuards += 1;
-      guardUnknown.push(
-        toFinding(
-          component,
-          "Exported; the guarding permission is unresolved, so absence of a guard is not established.",
-        ),
-      );
-    } else if (component.kind === "provider") {
-      // inspect_android_package does not project android:readPermission or
-      // android:writePermission, so a null provider permission proves nothing.
+      guardUnknown.push(toFinding(component, UNRESOLVED_GUARD_NOTE));
+    } else if (
+      component.kind === "provider" &&
+      component.permission_overrides !== "none"
+    ) {
+      // The producer projects whether readPermission/writePermission exist but
+      // not their values, so a provider without a base permission is unproven.
       providerOverrideGuards += 1;
-      guardUnknown.push(
-        toFinding(
-          component,
-          "Exported; provider readPermission/writePermission overrides are not projected, so absence of a guard is not established.",
-        ),
-      );
+      guardUnknown.push(toFinding(component, PROVIDER_OVERRIDE_NOTE));
     } else {
-      exportedWithout.push(
-        toFinding(component, "Exported without a guarding permission."),
-      );
+      exportedWithout.push(toFinding(component, UNGUARDED_COMPONENT_NOTE));
     }
   }
-  const unknowns = [
-    "Permission declarations do not establish protection levels or runtime enforcement.",
-    "Reachability through intents, tasks, and deep links was not traced; listed triggers are static declarations.",
-  ];
-  if (unresolvedGuards > 0) {
-    unknowns.push(
-      `${String(unresolvedGuards)} exported component(s) have an unresolved permission value; they stay guard-unknown rather than unguarded.`,
-    );
-  }
-  if (providerOverrideGuards > 0) {
-    unknowns.push(
-      `${String(providerOverrideGuards)} exported provider(s) declare no projected base permission; operation-specific readPermission/writePermission overrides are not projected, so they stay guard-unknown.`,
-    );
-  }
-  if (parsed.component_coverage !== "complete") {
-    unknowns.push(
-      `Component inventory coverage is ${parsed.component_coverage}; absence of a finding is unknown.`,
-    );
-  }
+  const unknowns: string[] = [...ANDROID_ATTACK_SURFACE_UNKNOWNS];
+  if (unresolvedGuards > 0)
+    unknowns.push(unresolvedGuardUnknown(unresolvedGuards));
+  if (providerOverrideGuards > 0)
+    unknowns.push(providerOverrideUnknown(providerOverrideGuards));
+  if (parsed.component_coverage !== "complete")
+    unknowns.push(coverageUnknown(parsed.component_coverage));
   return androidAttackSurfaceResultSchema.parse({
     package_name: parsed.package_name,
     exported_without_permission: exportedWithout,

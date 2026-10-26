@@ -379,22 +379,36 @@ it("does not inherit application permission through an explicit empty override",
 
 it("marks unprojected provider read and write permission overrides partial", () => {
   const manifest =
-    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><provider android:name=".ReadOnly" android:readPermission="com.example.READ"/><provider android:name=".WriteOnly" android:writePermission="com.example.WRITE"/><provider android:name=".Generic" android:permission="com.example.GENERIC" android:readPermission="com.example.READ"/></application></manifest>';
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><provider android:name=".ReadOnly" android:readPermission="com.example.READ"/><provider android:name=".WriteOnly" android:writePermission="com.example.WRITE"/><provider android:name=".Both" android:readPermission="com.example.READ" android:writePermission="com.example.WRITE"/><provider android:name=".Generic" android:permission="com.example.GENERIC" android:readPermission="com.example.READ"/><provider android:name=".Plain"/></application></manifest>';
   const inventory = parseAndroidManifestComponents(manifest, "complete", "33");
   expect(
-    inventory.items.map(({ permission, permission_source }) => [
-      permission,
-      permission_source,
-    ]),
+    inventory.items.map(
+      ({ permission, permission_source, permission_overrides: overrides }) => [
+        permission,
+        permission_source,
+        overrides,
+      ],
+    ),
   ).toEqual([
-    [null, "none"],
-    [null, "none"],
-    ["com.example.GENERIC", "component"],
+    [null, "none", "read"],
+    [null, "none", "write"],
+    [null, "none", "read-write"],
+    ["com.example.GENERIC", "component", "read"],
+    [null, "none", "none"],
   ]);
   expect(inventory.status).toBe("partial");
   expect(inventory.limitations.join(" ")).toContain(
     "operation-specific permission overrides are retained",
   );
+});
+
+it("reports no permission overrides for non-provider components", () => {
+  const inventory = parseAndroidManifestComponents(
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name=".Main" android:readPermission="com.example.READ"/></application></manifest>',
+    "complete",
+    "33",
+  );
+  expect(inventory.items[0]?.permission_overrides).toBe("none");
 });
 
 it("does not apply application or target permissions through an activity alias", () => {
