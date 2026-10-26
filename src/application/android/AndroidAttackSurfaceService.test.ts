@@ -163,7 +163,13 @@ describe("projectAndroidAttackSurfaceEvidence", () => {
   it("refuses components the linked inventory does not report", () => {
     const result = projectAndroidAttackSurfaceEvidence({
       package_name: "io.example",
-      components: [{ ...component, permission: "io.example.INVENTED" }],
+      components: [
+        {
+          ...component,
+          permission: "io.example.INVENTED",
+          permission_source: "component",
+        },
+      ],
       component_coverage: "complete",
       source_evidence: packageEvidence(),
     });

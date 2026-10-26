@@ -20,8 +20,10 @@ rea inspect-android-method /targets/Example.apk com.example.MainActivity onCreat
 ```
 
 Pack signals: `body_status: "not_available"` from `inspect-android-method` on
-app methods (`inspect-android-class` lists the methods to select; add
-`--overload-index` when a name repeats), a custom
+app methods that are neither native nor abstract (`inspect-android-class` lists
+the methods to select; add `--overload-index` when a name repeats, and exclude
+methods that carry the `native_method` or `abstract_method` marker, which report
+the same status in an unpacked APK), a custom
 `Application` subclass with `attachBaseContext`, few DEX classes against a
 large APK, and a native loader library in `lib/<abi>/`. Record these as the
 reason the code inventory is incomplete. If the APK is not packed, continue

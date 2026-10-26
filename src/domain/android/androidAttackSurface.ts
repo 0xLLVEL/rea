@@ -116,6 +116,32 @@ export const androidAttackSurfaceInputSchema = z
       ),
   })
   .superRefine((input, context) => {
+    // Permission and its provenance are admitted together: a guarded claim needs
+    // a value, and a value needs the source that established it. Contradictory
+    // pairs would otherwise become a definite security conclusion.
+    for (const [index, component] of input.components.entries()) {
+      const path = ["components", index, "permission_source"] as const;
+      if (
+        (component.permission_source === "component" ||
+          component.permission_source === "application") &&
+        component.permission === null
+      )
+        context.addIssue({
+          code: "custom",
+          path: [...path],
+          message: `permission_source "${component.permission_source}" requires the permission value it established; report the unresolved value as source "unknown" with permission null, or "none" with permission null`,
+        });
+      if (
+        component.permission_source !== "component" &&
+        component.permission_source !== "application" &&
+        component.permission !== null
+      )
+        context.addIssue({
+          code: "custom",
+          path: [...path],
+          message: `permission "${component.permission}" requires permission_source "component" or "application"; report source "${component.permission_source}" with permission null`,
+        });
+    }
     const selected = selectedTextLength(input);
     if (selected > ATTACK_SURFACE_INPUT_TEXT_LIMIT)
       context.addIssue({

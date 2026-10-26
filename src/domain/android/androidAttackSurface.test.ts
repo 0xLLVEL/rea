@@ -288,6 +288,38 @@ describe("projectAttackSurface provider guards", () => {
   });
 });
 
+describe("projectAttackSurface permission provenance", () => {
+  it("rejects a guarded claim without a value and a value without a source", () => {
+    expect(() =>
+      projectAttackSurface({
+        ...facts,
+        components: [
+          component({
+            kind: "activity",
+            name: "io.example.Valueless",
+            exported: true,
+            permission_source: "component",
+          }),
+        ],
+      }),
+    ).toThrow(/requires the permission value/u);
+    expect(() =>
+      projectAttackSurface({
+        ...facts,
+        components: [
+          component({
+            kind: "activity",
+            name: "io.example.Unsourced",
+            exported: true,
+            permission: "io.example.GUARD",
+            permission_source: "none",
+          }),
+        ],
+      }),
+    ).toThrow(/requires permission_source/u);
+  });
+});
+
 describe("projectAttackSurface budgets", () => {
   it("rejects a selection that exceeds the component or text budget", () => {
     expect(() =>
