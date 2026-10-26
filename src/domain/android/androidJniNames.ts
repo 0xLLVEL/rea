@@ -36,8 +36,6 @@ export const jniNameProjectionSchema = z.strictObject({
   overload_group_size: z.number().int().min(1),
 });
 
-export type JniNameProjection = z.infer<typeof jniNameProjectionSchema>;
-
 /** Deterministic JNI/JNA name projection over caller-selected methods. */
 export const androidJniNamesResultSchema = z.strictObject({
   class_name: z.string(),

@@ -3,7 +3,7 @@ import type { ServerContext } from "@modelcontextprotocol/server";
 import { runAdmittedToolOperation } from "../admittedToolOperation.js";
 
 import { projectAndroidJniNamesEvidence } from "../../application/android/AndroidJniNamesService.js";
-import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
+import { toolContract } from "../../contracts/toolContracts.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { recordResult } from "./helpers.js";
@@ -14,7 +14,7 @@ export const registerProjectAndroidJniNamesTool = (
   server: EvidenceMcpServer,
   options: ApplicationToolRegistration,
 ): void => {
-  const contract = applicationToolContract("project_android_jni_names");
+  const contract = toolContract("project_android_jni_names");
   server.registerTool(
     contract.name,
     toolRegistrationOptions(contract),

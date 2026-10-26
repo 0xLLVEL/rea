@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisProtocolError } from "../../domain/analysisErrorCore.js";
 import {
@@ -7,13 +5,9 @@ import {
   projectAttackSurface,
 } from "../../domain/android/androidAttackSurface.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
+import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { ANDROID_APPLICATION_PROVIDER } from "../InvestigationProviders.js";
-import {
-  requestInputError,
-  workflowInputError,
-} from "../workflowInputError.js";
+import { ANDROID_APPLICATION_PROVIDER } from "../../domain/investigationProviders.js";
 
 const OPERATION = "project_android_attack_surface" as const;
 
@@ -23,7 +17,11 @@ export const projectAndroidAttackSurfaceEvidence = (
 ): Result<Evidence, AnalysisError> => {
   const parsed = androidAttackSurfaceInputSchema.safeParse(rawInput);
   if (!parsed.success)
-    return err(requestInputError(OPERATION, parsed.error, rawInput));
+    return err(
+      analysisInputErrorFromIssues(OPERATION, parsed.error.issues, rawInput, {
+        cause: parsed.error,
+      }),
+    );
   try {
     const result = projectAttackSurface(parsed.data);
     return ok(
@@ -34,7 +32,7 @@ export const projectAndroidAttackSurfaceEvidence = (
           package_name: parsed.data.package_name,
           component_count: parsed.data.components.length,
         },
-        result: jsonValueSchema.parse(result),
+        result,
         rawResult: null,
         confidence: "derived",
         authority: "analyst-inference",
@@ -46,13 +44,13 @@ export const projectAndroidAttackSurfaceEvidence = (
       }),
     );
   } catch (cause: unknown) {
+    // Input already parsed against the same schema; a failure here is the
+    // projection's own invariant, never caller-supplied data.
     return err(
-      cause instanceof TypeError || cause instanceof z.ZodError
-        ? workflowInputError(OPERATION, cause)
-        : new AnalysisProtocolError(
-            "Android attack-surface projection produced an invalid result",
-            { cause },
-          ),
+      new AnalysisProtocolError(
+        "Android attack-surface projection produced an invalid result",
+        { cause },
+      ),
     );
   }
 };

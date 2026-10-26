@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { androidManifestComponentSchema } from "./androidManifestComponents.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
+import { androidManifestComponentSchema } from "./androidAnalysis.js";
 
 /** Caller-selected package facts, mirroring inspect_android_package declarations. */
 export const androidAttackSurfaceInputSchema = z.strictObject({
@@ -49,20 +50,26 @@ export type AndroidAttackSurfaceResult = z.infer<
   typeof androidAttackSurfaceResultSchema
 >;
 
-const actionsOf = (component: {
-  intent_filters: readonly { actions: readonly string[] }[];
-}): string[] => component.intent_filters.flatMap((filter) => filter.actions);
+/** How the effective export state was established: declared, defaulted, or unresolved. */
+const exportedSource = (
+  component: z.infer<typeof androidManifestComponentSchema>,
+): "explicit" | "implicit" | "unknown" =>
+  component.exported !== null
+    ? "explicit"
+    : component.exported_default !== null
+      ? "implicit"
+      : "unknown";
 
 const toFinding = (
   component: z.infer<typeof androidManifestComponentSchema>,
   note: string,
 ): AttackSurfaceFinding => ({
   kind: component.kind,
-  name: component.name,
-  resolved_name: component.resolved_name,
-  exported_source: component.exported_source,
+  name: component.declared_name,
+  resolved_name: component.name,
+  exported_source: exportedSource(component),
   permission: component.permission,
-  intent_actions: actionsOf(component),
+  intent_actions: [...component.actions],
   note,
 });
 
@@ -81,29 +88,32 @@ export const projectAttackSurface = (
   const serviceTypes = new Set<string>();
   const authorities = new Set<string | null>();
   for (const component of parsed.components) {
-    for (const action of actionsOf(component)) {
+    for (const action of component.actions) {
       const list = actionIndex.get(action) ?? [];
-      list.push(component.resolved_name ?? component.name);
+      list.push(component.name);
       actionIndex.set(action, list);
     }
     if (component.foreground_service_type !== null)
       serviceTypes.add(component.foreground_service_type);
     if (component.kind === "provider" && component.authorities !== null) {
-      authorities.add(component.authorities);
+      for (const authority of component.authorities) authorities.add(authority);
     }
-    if (component.exported === true && component.permission === null) {
+    // The effective export state is the declared literal, else Android's
+    // documented default for an absent android:exported when it applies.
+    const exported = component.exported ?? component.exported_default;
+    if (exported === true && component.permission === null) {
       exportedWithout.push(
         toFinding(component, "Exported without a guarding permission."),
       );
-    } else if (component.exported === true) {
+    } else if (exported === true) {
       guarded.push(
         toFinding(component, `Exported, guarded by ${component.permission}.`),
       );
-    } else if (component.exported === null) {
+    } else if (exported === null) {
       unknown.push(
         toFinding(
           component,
-          "Export state depends on targetSdk defaults; treat as reachable.",
+          "Export state is unresolved; treat the component as reachable.",
         ),
       );
     }
@@ -124,10 +134,10 @@ export const projectAttackSurface = (
     export_unknown: unknown,
     intent_action_index: [...actionIndex]
       .map(([action, components]) => ({ action, components }))
-      .sort((a, b) => (a.action < b.action ? -1 : 1)),
-    foreground_service_types: [...serviceTypes].sort(),
+      .sort((a, b) => compareUnicodeCodePoints(a.action, b.action)),
+    foreground_service_types: [...serviceTypes].sort(compareUnicodeCodePoints),
     provider_authorities: [...authorities].sort((a, b) =>
-      (a ?? "").localeCompare(b ?? ""),
+      compareUnicodeCodePoints(a ?? "", b ?? ""),
     ),
     coverage: parsed.component_coverage,
     unknowns,

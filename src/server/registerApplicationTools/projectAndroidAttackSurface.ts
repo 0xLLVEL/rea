@@ -3,7 +3,7 @@ import type { ServerContext } from "@modelcontextprotocol/server";
 import { runAdmittedToolOperation } from "../admittedToolOperation.js";
 
 import { projectAndroidAttackSurfaceEvidence } from "../../application/android/AndroidAttackSurfaceService.js";
-import { applicationToolContract } from "../../contracts/applicationToolContracts.js";
+import { toolContract } from "../../contracts/toolContracts.js";
 import { logToolExecution } from "../toolLogging.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { recordResult } from "./helpers.js";
@@ -14,7 +14,7 @@ export const registerProjectAndroidAttackSurfaceTool = (
   server: EvidenceMcpServer,
   options: ApplicationToolRegistration,
 ): void => {
-  const contract = applicationToolContract("project_android_attack_surface");
+  const contract = toolContract("project_android_attack_surface");
   server.registerTool(
     contract.name,
     toolRegistrationOptions(contract),

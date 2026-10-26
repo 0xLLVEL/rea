@@ -1,5 +1,3 @@
-import { z } from "zod";
-
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisProtocolError } from "../../domain/analysisErrorCore.js";
 import {
@@ -7,13 +5,9 @@ import {
   projectJniNames,
 } from "../../domain/android/androidJniNames.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
-import { jsonValueSchema } from "../../domain/jsonValue.js";
+import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { ANDROID_APPLICATION_PROVIDER } from "../InvestigationProviders.js";
-import {
-  requestInputError,
-  workflowInputError,
-} from "../workflowInputError.js";
+import { ANDROID_APPLICATION_PROVIDER } from "../../domain/investigationProviders.js";
 
 const OPERATION = "project_android_jni_names" as const;
 
@@ -23,7 +17,11 @@ export const projectAndroidJniNamesEvidence = (
 ): Result<Evidence, AnalysisError> => {
   const parsed = androidJniNamesInputSchema.safeParse(rawInput);
   if (!parsed.success)
-    return err(requestInputError(OPERATION, parsed.error, rawInput));
+    return err(
+      analysisInputErrorFromIssues(OPERATION, parsed.error.issues, rawInput, {
+        cause: parsed.error,
+      }),
+    );
   try {
     const result = projectJniNames(parsed.data);
     return ok(
@@ -34,7 +32,7 @@ export const projectAndroidJniNamesEvidence = (
           class_name: parsed.data.class_name,
           method_count: parsed.data.methods.length,
         },
-        result: jsonValueSchema.parse(result),
+        result,
         rawResult: null,
         confidence: "derived",
         authority: "analyst-inference",
@@ -46,13 +44,13 @@ export const projectAndroidJniNamesEvidence = (
       }),
     );
   } catch (cause: unknown) {
+    // Input already parsed against the same schema; a failure here is the
+    // projection's own invariant, never caller-supplied data.
     return err(
-      cause instanceof TypeError || cause instanceof z.ZodError
-        ? workflowInputError(OPERATION, cause)
-        : new AnalysisProtocolError(
-            "Android JNI name projection produced an invalid result",
-            { cause },
-          ),
+      new AnalysisProtocolError(
+        "Android JNI name projection produced an invalid result",
+        { cause },
+      ),
     );
   }
 };

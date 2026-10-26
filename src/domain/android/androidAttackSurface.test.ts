@@ -1,41 +1,72 @@
 import { describe, expect, it } from "vitest";
 
-import { projectManifestComponents } from "./androidManifestComponents.js";
+import { androidManifestComponentSchema } from "./androidAnalysis.js";
 import { projectAttackSurface } from "./androidAttackSurface.js";
 
-const MANIFEST = `<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="io.example">
-  <application>
-    <activity android:name=".Main" android:exported="true">
-      <intent-filter>
-        <action android:name="android.intent.action.MAIN" />
-      </intent-filter>
-    </activity>
-    <service android:name=".Sync" android:permission="android.permission.BIND_JOB_SERVICE" android:foregroundServiceType="shortService">
-      <intent-filter><action android:name="SYNC" /></intent-filter>
-    </service>
-    <receiver android:name=".Sms" android:exported="true">
-      <intent-filter><action android:name="android.provider.Telephony.SMS_RECEIVED" /></intent-filter>
-    </receiver>
-    <provider android:name=".Files" android:authorities="io.example.files" android:exported="false" />
-  </application>
-</manifest>`;
+type Component = typeof androidManifestComponentSchema._output;
 
-const facts = (targetSdk: string) => {
-  const projected = projectManifestComponents({
-    manifestText: MANIFEST,
-    manifestStatus: "complete",
-    packageName: "io.example",
-    targetSdk,
-  });
-  return {
-    package_name: "io.example",
-    target_sdk: targetSdk,
-    permissions: ["android.permission.INTERNET"],
-    components: [...projected.components],
-    component_coverage: projected.coverage,
-  };
-};
+const component = (
+  overrides: Partial<Component> & Pick<Component, "kind" | "name">,
+): Component => ({
+  declared_name: overrides.name,
+  exported: null,
+  exported_default: null,
+  permission: null,
+  permission_source: "none",
+  intent_filter_count: 0,
+  actions: [],
+  categories: [],
+  foreground_service_type: null,
+  authorities: null,
+  target_activity: null,
+  ...overrides,
+});
+
+const components: Component[] = [
+  component({
+    kind: "activity",
+    name: "io.example.Main",
+    exported: true,
+    actions: ["android.intent.action.MAIN"],
+    intent_filter_count: 1,
+  }),
+  component({
+    kind: "service",
+    name: "io.example.Sync",
+    exported_default: true,
+    permission: "android.permission.BIND_JOB_SERVICE",
+    permission_source: "component",
+    foreground_service_type: "shortService",
+    actions: ["SYNC"],
+    intent_filter_count: 1,
+  }),
+  component({
+    kind: "receiver",
+    name: "io.example.Sms",
+    exported: true,
+    actions: ["android.provider.Telephony.SMS_RECEIVED"],
+    intent_filter_count: 1,
+  }),
+  component({
+    kind: "provider",
+    name: "io.example.Files",
+    exported: false,
+    authorities: ["io.example.files"],
+  }),
+  component({
+    kind: "activity",
+    name: "io.example.Ambiguous",
+    declared_name: ".Ambiguous",
+  }),
+];
+
+const facts = (targetSdk: string) => ({
+  package_name: "io.example",
+  target_sdk: targetSdk,
+  permissions: ["android.permission.INTERNET"],
+  components,
+  component_coverage: "complete" as const,
+});
 
 describe("projectAttackSurface", () => {
   it("separates unguarded, guarded and unknown exports with an action index", () => {
@@ -44,8 +75,20 @@ describe("projectAttackSurface", () => {
     expect(
       result.exported_without_permission.map((f) => f.resolved_name),
     ).toEqual(["io.example.Main", "io.example.Sms"]);
+    expect(
+      result.exported_without_permission.map((f) => f.exported_source),
+    ).toEqual(["explicit", "explicit"]);
     expect(result.exported_guarded.map((f) => f.permission)).toEqual([
       "android.permission.BIND_JOB_SERVICE",
+    ]);
+    expect(result.exported_guarded.map((f) => f.exported_source)).toEqual([
+      "implicit",
+    ]);
+    expect(result.export_unknown.map((f) => f.resolved_name)).toEqual([
+      "io.example.Ambiguous",
+    ]);
+    expect(result.export_unknown.map((f) => f.exported_source)).toEqual([
+      "unknown",
     ]);
     expect(result.foreground_service_types).toEqual(["shortService"]);
     expect(result.provider_authorities).toEqual(["io.example.files"]);

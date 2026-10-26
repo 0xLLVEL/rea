@@ -6,6 +6,7 @@ import { registerCompareApplicationVersionsTool } from "./registerApplicationToo
 import { registerCompareSourceToBundleTool } from "./registerApplicationTools/compareSourceToBundle.js";
 import { registerCompareJavaScriptExportShapesTool } from "./registerApplicationTools/compareExportShapes.js";
 import { registerCoverageTools } from "./registerApplicationTools/coverage.js";
+import { registerEnvironmentBundleTool } from "./registerApplicationTools/environmentBundle.js";
 import { registerReconstructionObligationLedgerTool } from "./registerApplicationTools/obligationLedger.js";
 import { registerProjectMobileApplicationGraphTools } from "./registerApplicationTools/projectMobileApplicationGraph.js";
 import { registerProjectAndroidJniNamesTool } from "./registerApplicationTools/projectAndroidJniNames.js";
@@ -24,6 +25,7 @@ export const registerApplicationTools = (
   registerCompareJavaScriptExportShapesTool(server, options);
   registerReconstructionObligationLedgerTool(server, options);
   registerCoverageTools(server, options);
+  registerEnvironmentBundleTool(server, options);
   registerProjectMobileApplicationGraphTools(server, options);
   registerProjectAndroidJniNamesTool(server, options);
   registerProjectAndroidAttackSurfaceTool(server, options);
