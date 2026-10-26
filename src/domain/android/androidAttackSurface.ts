@@ -228,6 +228,14 @@ export const PROVIDER_OVERRIDE_NOTE =
 export const PROVIDER_PATH_PERMISSION_NOTE =
   "Exported; child <path-permission> guards cover only the paths they declare and their values are not projected, so the provider's access guard is not established.";
 
+/** Finding note for an exported provider whose override presence predates the projection. */
+export const UNPROJECTED_OVERRIDE_NOTE =
+  "Exported; whether this provider declares readPermission/writePermission overrides is not established by the retained inventory, so absence of an override is not established.";
+
+/** Finding note for an exported provider whose path-guard presence predates the projection. */
+export const UNPROJECTED_PATH_NOTE =
+  "Exported; whether this provider declares child <path-permission> guards is not established by the retained inventory, so absence of path guards is not established.";
+
 /** Explanation of unresolved permission values counted in this result. */
 export const unresolvedGuardUnknown = (count: number): string =>
   `${String(count)} exported component(s) have an unresolved permission value; they stay guard-unknown rather than unguarded.`;
@@ -239,6 +247,10 @@ export const providerOverrideUnknown = (count: number): string =>
 /** Explanation of exported providers kept guard-unknown by unprojected path guards. */
 export const providerPathPermissionUnknown = (count: number): string =>
   `${String(count)} exported provider(s) declare child <path-permission> guards; their paths and permission values are not projected, so those providers stay guard-unknown.`;
+
+/** Explanation of exported providers whose guard presence predates the projection. */
+export const unprojectedProviderGuardUnknown = (count: number): string =>
+  `${String(count)} exported provider(s) come from an inventory that predates the provider-guard projection; override and path-guard presence stay unknown rather than absent.`;
 
 /** Explanation of incomplete component coverage. */
 export const coverageUnknown = (coverage: string): string =>
@@ -288,6 +300,7 @@ export const projectAttackSurface = (
   let unresolvedGuards = 0;
   let providerOverrideGuards = 0;
   let providerPathGuards = 0;
+  let providerGuardPresenceUnknown = 0;
   for (const component of parsed.components) {
     for (const action of component.actions) {
       const list = actionIndex.get(action) ?? [];
@@ -320,16 +333,31 @@ export const projectAttackSurface = (
       // The producer projects whether readPermission/writePermission and child
       // <path-permission> guards exist but not their values or paths. Either
       // replaces or clears the base permission for some operations, so the
-      // projected statement does not establish the guard.
-      if (component.permission_overrides !== "none")
-        providerOverrideGuards += 1;
-      if (component.path_permissions !== "none") providerPathGuards += 1;
+      // projected statement does not establish the guard. An inventory that
+      // predates the projection leaves the presence itself unknown, which is
+      // reported as unknown rather than as a declared guard.
+      const overridesDeclared =
+        component.permission_overrides === "read" ||
+        component.permission_overrides === "write" ||
+        component.permission_overrides === "read-write";
+      const pathsDeclared = component.path_permissions === "present";
+      if (overridesDeclared) providerOverrideGuards += 1;
+      if (pathsDeclared) providerPathGuards += 1;
+      if (
+        component.permission_overrides === "unknown" ||
+        component.path_permissions === "unknown"
+      )
+        providerGuardPresenceUnknown += 1;
       guardUnknown.push(
         toFinding(
           component,
-          component.permission_overrides === "none"
-            ? PROVIDER_PATH_PERMISSION_NOTE
-            : PROVIDER_OVERRIDE_NOTE,
+          overridesDeclared
+            ? PROVIDER_OVERRIDE_NOTE
+            : pathsDeclared
+              ? PROVIDER_PATH_PERMISSION_NOTE
+              : component.permission_overrides === "unknown"
+                ? UNPROJECTED_OVERRIDE_NOTE
+                : UNPROJECTED_PATH_NOTE,
         ),
       );
     } else if (
@@ -353,6 +381,10 @@ export const projectAttackSurface = (
     unknowns.push(providerOverrideUnknown(providerOverrideGuards));
   if (providerPathGuards > 0)
     unknowns.push(providerPathPermissionUnknown(providerPathGuards));
+  if (providerGuardPresenceUnknown > 0)
+    unknowns.push(
+      unprojectedProviderGuardUnknown(providerGuardPresenceUnknown),
+    );
   if (parsed.component_coverage !== "complete")
     unknowns.push(coverageUnknown(parsed.component_coverage));
   return androidAttackSurfaceResultSchema.parse({

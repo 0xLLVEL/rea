@@ -4,7 +4,10 @@ import { createEvidence } from "../../domain/evidence.js";
 import { ANDROID_APPLICATION_PROVIDER } from "../../domain/investigationProviders.js";
 import { projectAndroidJniNamesEvidence } from "./AndroidJniNamesService.js";
 
-const classEvidence = () =>
+const classEvidence = (
+  class_name: string = "pkg.Native",
+  dex_class_name: string = "pkg.Native",
+) =>
   createEvidence(
     { path: "/tmp/Example.apk", sha256: "c".repeat(64), format: "apk" },
     ANDROID_APPLICATION_PROVIDER,
@@ -21,8 +24,8 @@ const classEvidence = () =>
           worker_count: 1,
           heap_limit_mib: null,
         },
-        class_name: "pkg.Native",
-        dex_class_name: "pkg.Native",
+        class_name,
+        dex_class_name,
         methods: [
           {
             name: "nativeInit",
@@ -76,6 +79,18 @@ describe("projectAndroidJniNamesEvidence", () => {
       local_path: "/tmp/Example.apk",
       format: "apk",
       digest: { sha256: "c".repeat(64) },
+    });
+  });
+
+  it("refuses a decompiler display name where the raw DEX identity is required", () => {
+    const result = projectAndroidJniNamesEvidence({
+      class_name: "pkg.Outer.Worker",
+      methods: [{ method_name: "run", dex_descriptor: "()V" }],
+      source_evidence: classEvidence("pkg.Outer.Worker", "pkg.Outer$Worker"),
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisInputError" },
     });
   });
 

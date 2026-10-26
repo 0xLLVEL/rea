@@ -214,14 +214,20 @@ unknown.
 
 Both projections accept an optional `source_evidence`: pass the
 `inspect-android-package` Evidence for the attack surface, or the
-`inspect-android-class` Evidence for JNI names. Every selected component, class
-and method is then checked against that record, the result copies its artifact
-subject and links its `evidence_id`, and the Evidence parameters record
-`source_evidence_id`. A selection is narrowed from that record, never extended:
-an edited fact is refused instead of being attributed to the artifact. Without
-it the projection still records the exact selection, states that no source
-Evidence was linked, and keeps `evidence_links` empty, so declarations copied
-from different APKs stay distinguishable only when a source is supplied.
+`inspect-android-class` Evidence for JNI names. The record is authenticated by
+its own identity first, so an edited copy with a stale `evidence_id` is refused.
+Every selected component, class and method is then checked against that record,
+the result copies its artifact subject and links its `evidence_id`, and the
+Evidence parameters record `source_evidence_id`. A selection is narrowed from
+that record, never extended: an edited fact is refused instead of being
+attributed to the artifact, the `package_name` must match the linked inventory,
+`component_coverage: "complete"` requires that inventory to report complete
+coverage and to be passed in full, and the JNI `class_name` must be the raw
+`dex_class_name`, because a decompiler display name can be an alias that projects
+symbols no native library exports. Without a source the projection still records
+the exact selection, states that no source Evidence was linked, and keeps
+`evidence_links` empty, so declarations copied from different APKs stay
+distinguishable only when a source is supplied.
 
 For packed or split targets, follow the
 [packed and split APK playbook](android-packed-analysis.md): static pack

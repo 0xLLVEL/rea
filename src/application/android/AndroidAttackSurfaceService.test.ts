@@ -22,7 +22,17 @@ const component = {
   target_activity: null,
 } as const;
 
-const packageEvidence = (items: readonly unknown[] = [component]) =>
+const secondComponent = {
+  ...component,
+  kind: "service",
+  declared_name: ".Sync",
+  name: "io.example.Sync",
+} as const;
+
+const packageEvidence = (
+  items: readonly unknown[] = [component],
+  status: "complete" | "partial" | "unavailable" = "complete",
+) =>
   createEvidence(
     { path: "/tmp/Example.apk", sha256: "a".repeat(64), format: "apk" },
     ANDROID_APPLICATION_PROVIDER,
@@ -50,7 +60,7 @@ const packageEvidence = (items: readonly unknown[] = [component]) =>
           text: "<manifest/>",
           reported_total_bytes: null,
         },
-        components: { status: "complete", items, limitations: [] },
+        components: { status, items, limitations: [] },
         class_count: 0,
         resource_count: 0,
         signature_verification: "not_performed",
@@ -126,6 +136,20 @@ describe("projectAndroidAttackSurfaceEvidence", () => {
     });
   });
 
+  it("rejects unknown coverage values as input errors", () => {
+    const result = projectAndroidAttackSurfaceEvidence({
+      package_name: null,
+      components: [],
+      component_coverage: "everything",
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisInputError" },
+    });
+  });
+});
+
+describe("projectAndroidAttackSurfaceEvidence with a linked source", () => {
   it("links and attributes the projection to the selected package Evidence", () => {
     const source = packageEvidence();
     const result = projectAndroidAttackSurfaceEvidence({
@@ -179,11 +203,59 @@ describe("projectAndroidAttackSurfaceEvidence", () => {
     });
   });
 
-  it("rejects unknown coverage values as input errors", () => {
+  it("refuses a complete claim over a partial linked inventory", () => {
     const result = projectAndroidAttackSurfaceEvidence({
-      package_name: null,
-      components: [],
-      component_coverage: "everything",
+      package_name: "io.example",
+      components: [component],
+      component_coverage: "complete",
+      source_evidence: packageEvidence([component], "partial"),
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisInputError" },
+    });
+  });
+
+  it("refuses a selection that omits components of a complete linked inventory", () => {
+    const result = projectAndroidAttackSurfaceEvidence({
+      package_name: "io.example",
+      components: [component],
+      component_coverage: "complete",
+      source_evidence: packageEvidence([component, secondComponent]),
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisInputError" },
+    });
+  });
+
+  it("refuses a package name the linked inventory does not report", () => {
+    const result = projectAndroidAttackSurfaceEvidence({
+      package_name: "io.other",
+      components: [component],
+      component_coverage: "complete",
+      source_evidence: packageEvidence(),
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisInputError" },
+    });
+  });
+
+  it("refuses an edited source record whose identity no longer matches", () => {
+    const source = packageEvidence();
+    const edited = {
+      ...source,
+      normalized_result: {
+        ...(source.normalized_result as Record<string, unknown>),
+        components: { status: "complete", items: [], limitations: [] },
+      },
+    } as typeof source;
+    const result = projectAndroidAttackSurfaceEvidence({
+      package_name: "io.example",
+      components: [component],
+      component_coverage: "complete",
+      source_evidence: edited,
     });
     expect(result).toMatchObject({
       ok: false,

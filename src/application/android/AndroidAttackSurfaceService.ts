@@ -29,7 +29,11 @@ export const projectAndroidAttackSurfaceEvidence = (
   const source = authenticateComponentSelection(
     OPERATION,
     parsed.data.source_evidence,
-    parsed.data.components,
+    {
+      package_name: parsed.data.package_name,
+      component_coverage: parsed.data.component_coverage,
+      components: parsed.data.components,
+    },
   );
   if (!source.ok) return source;
   try {

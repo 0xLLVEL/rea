@@ -10,7 +10,10 @@ import {
   providerOverrideUnknown,
   providerPathPermissionUnknown,
   UNGUARDED_COMPONENT_NOTE,
+  UNPROJECTED_OVERRIDE_NOTE,
+  UNPROJECTED_PATH_NOTE,
   UNRESOLVED_GUARD_NOTE,
+  unprojectedProviderGuardUnknown,
   unresolvedGuardUnknown,
 } from "./androidAttackSurface.js";
 
@@ -252,7 +255,13 @@ describe("projectAttackSurface", () => {
     expect(result.exported_guard_unknown.map((f) => f.resolved_name)).toEqual([
       "io.example.Stale",
     ]);
-    expect(result.unknowns).toContain(providerOverrideUnknown(1));
+    // The inventory predates the projection, so the presence itself is
+    // unknown; that is not a declared guard.
+    expect(result.exported_guard_unknown[0]?.note).toBe(
+      UNPROJECTED_OVERRIDE_NOTE,
+    );
+    expect(result.unknowns).toContain(unprojectedProviderGuardUnknown(1));
+    expect(result.unknowns).not.toContain(providerOverrideUnknown(1));
   });
 });
 
@@ -282,9 +291,12 @@ describe("projectAttackSurface provider guards", () => {
       result.exported_guard_unknown.map((f) => [f.resolved_name, f.note]),
     ).toEqual([
       ["io.example.Paths", PROVIDER_PATH_PERMISSION_NOTE],
-      ["io.example.StalePaths", PROVIDER_PATH_PERMISSION_NOTE],
+      ["io.example.StalePaths", UNPROJECTED_PATH_NOTE],
     ]);
-    expect(result.unknowns).toContain(providerPathPermissionUnknown(2));
+    expect(result.unknowns).toContain(providerPathPermissionUnknown(1));
+    // Unknown presence is reported as unknown, never as a declared guard.
+    expect(result.unknowns).toContain(unprojectedProviderGuardUnknown(1));
+    expect(result.unknowns).not.toContain(providerPathPermissionUnknown(2));
   });
 });
 
