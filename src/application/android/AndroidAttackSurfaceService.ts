@@ -30,7 +30,11 @@ export const projectAndroidAttackSurfaceEvidence = (
         operation: OPERATION,
         parameters: {
           package_name: parsed.data.package_name,
+          component_coverage: parsed.data.component_coverage,
           component_count: parsed.data.components.length,
+          // The selection stays readable even where the projection drops
+          // fields (permission_source) or whole non-exported components.
+          components: parsed.data.components,
         },
         result,
         rawResult: null,

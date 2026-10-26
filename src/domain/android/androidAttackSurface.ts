@@ -6,8 +6,6 @@ import { androidManifestComponentSchema } from "./androidAnalysis.js";
 /** Caller-selected package facts, mirroring inspect_android_package declarations. */
 export const androidAttackSurfaceInputSchema = z.strictObject({
   package_name: z.string().nullable(),
-  target_sdk: z.string().nullable(),
-  permissions: z.array(z.string()),
   components: z.array(androidManifestComponentSchema),
   component_coverage: z.enum(["complete", "partial", "unknown"]),
 });
@@ -19,6 +17,7 @@ export const attackSurfaceFindingSchema = z.strictObject({
   resolved_name: z.string().nullable(),
   exported_source: z.enum(["explicit", "implicit", "unknown"]),
   permission: z.string().nullable(),
+  permission_source: z.enum(["component", "application", "none", "unknown"]),
   intent_actions: z.array(z.string()),
   note: z.string(),
 });
@@ -30,6 +29,7 @@ export const androidAttackSurfaceResultSchema = z.strictObject({
   package_name: z.string().nullable(),
   exported_without_permission: z.array(attackSurfaceFindingSchema),
   exported_guarded: z.array(attackSurfaceFindingSchema),
+  exported_guard_unknown: z.array(attackSurfaceFindingSchema),
   export_unknown: z.array(attackSurfaceFindingSchema),
   intent_action_index: z.array(
     z.strictObject({
@@ -69,6 +69,7 @@ const toFinding = (
   resolved_name: component.name,
   exported_source: exportedSource(component),
   permission: component.permission,
+  permission_source: component.permission_source,
   intent_actions: [...component.actions],
   note,
 });
@@ -83,10 +84,13 @@ export const projectAttackSurface = (
   const parsed = androidAttackSurfaceInputSchema.parse(input);
   const exportedWithout: AttackSurfaceFinding[] = [];
   const guarded: AttackSurfaceFinding[] = [];
+  const guardUnknown: AttackSurfaceFinding[] = [];
   const unknown: AttackSurfaceFinding[] = [];
   const actionIndex = new Map<string, (string | null)[]>();
   const serviceTypes = new Set<string>();
   const authorities = new Set<string | null>();
+  let unresolvedGuards = 0;
+  let providerOverrideGuards = 0;
   for (const component of parsed.components) {
     for (const action of component.actions) {
       const list = actionIndex.get(action) ?? [];
@@ -101,20 +105,44 @@ export const projectAttackSurface = (
     // The effective export state is the declared literal, else Android's
     // documented default for an absent android:exported when it applies.
     const exported = component.exported ?? component.exported_default;
-    if (exported === true && component.permission === null) {
-      exportedWithout.push(
-        toFinding(component, "Exported without a guarding permission."),
-      );
-    } else if (exported === true) {
-      guarded.push(
-        toFinding(component, `Exported, guarded by ${component.permission}.`),
-      );
-    } else if (exported === null) {
+    if (exported === null) {
       unknown.push(
         toFinding(
           component,
           "Export state is unresolved; treat the component as reachable.",
         ),
+      );
+      continue;
+    }
+    if (!exported) continue;
+    if (
+      component.permission_source === "component" ||
+      component.permission_source === "application"
+    ) {
+      guarded.push(
+        toFinding(component, `Exported, guarded by ${component.permission}.`),
+      );
+    } else if (component.permission_source === "unknown") {
+      unresolvedGuards += 1;
+      guardUnknown.push(
+        toFinding(
+          component,
+          "Exported; the guarding permission is unresolved, so absence of a guard is not established.",
+        ),
+      );
+    } else if (component.kind === "provider") {
+      // inspect_android_package does not project android:readPermission or
+      // android:writePermission, so a null provider permission proves nothing.
+      providerOverrideGuards += 1;
+      guardUnknown.push(
+        toFinding(
+          component,
+          "Exported; provider readPermission/writePermission overrides are not projected, so absence of a guard is not established.",
+        ),
+      );
+    } else {
+      exportedWithout.push(
+        toFinding(component, "Exported without a guarding permission."),
       );
     }
   }
@@ -122,6 +150,16 @@ export const projectAttackSurface = (
     "Permission declarations do not establish protection levels or runtime enforcement.",
     "Reachability through intents, tasks, and deep links was not traced; listed triggers are static declarations.",
   ];
+  if (unresolvedGuards > 0) {
+    unknowns.push(
+      `${String(unresolvedGuards)} exported component(s) have an unresolved permission value; they stay guard-unknown rather than unguarded.`,
+    );
+  }
+  if (providerOverrideGuards > 0) {
+    unknowns.push(
+      `${String(providerOverrideGuards)} exported provider(s) declare no projected base permission; operation-specific readPermission/writePermission overrides are not projected, so they stay guard-unknown.`,
+    );
+  }
   if (parsed.component_coverage !== "complete") {
     unknowns.push(
       `Component inventory coverage is ${parsed.component_coverage}; absence of a finding is unknown.`,
@@ -131,6 +169,7 @@ export const projectAttackSurface = (
     package_name: parsed.package_name,
     exported_without_permission: exportedWithout,
     exported_guarded: guarded,
+    exported_guard_unknown: guardUnknown,
     export_unknown: unknown,
     intent_action_index: [...actionIndex]
       .map(([action, components]) => ({ action, components }))

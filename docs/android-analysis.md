@@ -180,22 +180,26 @@ rea project-android-jni-names '{"class_name": "example.MainActivity", "methods":
 Equivalent MCP method is `project_android_jni_names`. It reports JNI short/long
 names and the JNA exact name per method from caller-selected declarations, so
 an expected `Java_pkg_Class_method` name can be searched in an extracted `.so`
-with the native providers. The descriptor is optional: without it only the
-short name is reported, because REA class inventory no longer reports DEX
-prototypes. Nested classes need the binary `$` form. A name
-match is a static binding hypothesis, not proof of loading or invocation;
-`RegisterNatives` registration stays unknown.
+with the native providers. Pass the `dex_descriptor` that
+`inspect-android-class` reports for each method; it may be omitted, and an
+omitted descriptor reports only the short name, which no longer identifies one
+overload. Nested classes need the binary `$` form. A name match is a static
+binding hypothesis, not proof of loading or invocation; `RegisterNatives`
+registration stays unknown. At most 2000 methods per call; split a larger
+selection by class or method group.
 
-Feed `inspect_android_package` declarations into `project_android_attack_surface`
-to separate exported components without a guarding permission from guarded and
-export-unknown ones, with an intent-action index, foreground-service types and
-provider authorities. Findings rank static declarations only; protection levels,
-reachability and exploitability stay unknown.
+Feed the `components` that `inspect-android-package` returns into
+`project_android_attack_surface` to separate exported components without an
+established guard from guarded ones, keeping components whose permission value
+is unresolved, and providers that rely on `readPermission`/`writePermission`
+overrides, in a guard-unknown bucket. It also indexes intent actions and reports
+foreground-service types and provider authorities. Findings rank static
+declarations only; protection levels, reachability and exploitability stay
+unknown.
 
 For packed or split targets, follow the
 [packed and split APK playbook](android-packed-analysis.md): static pack
-detection, full split acquisition, isolated emulator dumping, and static
-re-analysis with linked provenance.
+detection and full split acquisition.
 
 Equivalent MCP methods are `inspect_android_package`, `search_android_classes`,
 `inspect_android_class`, `inspect_android_method` and `trace_android_references`.

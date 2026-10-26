@@ -330,7 +330,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "project_android_jni_names",
     ...toolContractMetadata("project_android_jni_names"),
     description:
-      "Project expected JNI short/long symbol names and the JNA exact name for caller-selected DEX methods without reading an APK or native library. The dex_descriptor is optional: omitted methods report only the short name, since REA class inventory no longer reports DEX prototypes. Reports per-method mangled names, overload group sizes, and explicit unknowns for RegisterNatives registration and runtime loading; a name match never establishes invocation.",
+      "Project expected JNI short/long symbol names and the JNA exact name for caller-selected DEX methods without reading an APK or native library. Pass the dex_descriptor that inspect_android_class reports for each method; it may be omitted, and an omitted descriptor reports only the short name. Reports per-method mangled names, overload group sizes, and explicit unknowns for RegisterNatives registration and runtime loading; a name match never establishes invocation. At most 2000 methods per call.",
     kind: "application",
     inputSchema: androidJniNamesInputSchema,
     outputSchema: evidenceResultOf(androidJniNamesResultSchema),
@@ -354,7 +354,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "project_android_attack_surface",
     ...toolContractMetadata("project_android_attack_surface"),
     description:
-      "Project structural attack-surface facts from caller-selected Android package declarations (permissions plus inspect_android_package components). Separates exported components without a guarding permission from guarded and export-unknown ones, indexes intent actions, and reports foreground-service types and provider authorities without claiming protection levels, reachability, or exploitability.",
+      "Project structural attack-surface facts from the components that inspect_android_package reports. Separates exported components that an established permission source leaves unguarded from guarded ones, keeps unresolved permissions and provider readPermission/writePermission overrides guard-unknown, indexes intent actions, and reports foreground-service types and provider authorities without claiming protection levels, reachability, or exploitability.",
     kind: "application",
     inputSchema: androidAttackSurfaceInputSchema,
     outputSchema: evidenceResultOf(androidAttackSurfaceResultSchema),
@@ -363,8 +363,6 @@ export const APPLICATION_TOOL_CONTRACTS = [
         title: "Rank exported components from package declarations",
         input: {
           package_name: "io.example",
-          target_sdk: "30",
-          permissions: ["android.permission.INTERNET"],
           components: [],
           component_coverage: "complete",
         },

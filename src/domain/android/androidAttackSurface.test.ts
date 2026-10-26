@@ -58,19 +58,37 @@ const components: Component[] = [
     name: "io.example.Ambiguous",
     declared_name: ".Ambiguous",
   }),
+  component({
+    kind: "provider",
+    name: "io.example.Bridge",
+    exported: true,
+    authorities: ["io.example.bridge"],
+  }),
+  component({
+    kind: "activity",
+    name: "io.example.Tokenized",
+    exported: true,
+    permission: null,
+    permission_source: "unknown",
+  }),
+  component({
+    kind: "service",
+    name: "io.example.Delegated",
+    exported: true,
+    permission: "io.example.permission.GUARD",
+    permission_source: "application",
+  }),
 ];
 
-const facts = (targetSdk: string) => ({
+const facts = {
   package_name: "io.example",
-  target_sdk: targetSdk,
-  permissions: ["android.permission.INTERNET"],
   components,
   component_coverage: "complete" as const,
-});
+};
 
 describe("projectAttackSurface", () => {
-  it("separates unguarded, guarded and unknown exports with an action index", () => {
-    const result = projectAttackSurface(facts("30"));
+  it("separates unguarded, guarded and unknown guards with an action index", () => {
+    const result = projectAttackSurface(facts);
     expect(result.coverage).toBe("complete");
     expect(
       result.exported_without_permission.map((f) => f.resolved_name),
@@ -78,11 +96,27 @@ describe("projectAttackSurface", () => {
     expect(
       result.exported_without_permission.map((f) => f.exported_source),
     ).toEqual(["explicit", "explicit"]);
-    expect(result.exported_guarded.map((f) => f.permission)).toEqual([
-      "android.permission.BIND_JOB_SERVICE",
+    expect(
+      result.exported_without_permission.map((f) => f.permission_source),
+    ).toEqual(["none", "none"]);
+    expect(
+      result.exported_guarded.map((f) => [f.permission, f.permission_source]),
+    ).toEqual([
+      ["android.permission.BIND_JOB_SERVICE", "component"],
+      ["io.example.permission.GUARD", "application"],
     ]);
     expect(result.exported_guarded.map((f) => f.exported_source)).toEqual([
       "implicit",
+      "explicit",
+    ]);
+    expect(
+      result.exported_guard_unknown.map((f) => [
+        f.resolved_name,
+        f.permission_source,
+      ]),
+    ).toEqual([
+      ["io.example.Bridge", "none"],
+      ["io.example.Tokenized", "unknown"],
     ]);
     expect(result.export_unknown.map((f) => f.resolved_name)).toEqual([
       "io.example.Ambiguous",
@@ -91,18 +125,55 @@ describe("projectAttackSurface", () => {
       "unknown",
     ]);
     expect(result.foreground_service_types).toEqual(["shortService"]);
-    expect(result.provider_authorities).toEqual(["io.example.files"]);
+    expect(result.provider_authorities).toEqual([
+      "io.example.bridge",
+      "io.example.files",
+    ]);
     expect(
       result.intent_action_index.find(
         (entry) => entry.action === "android.provider.Telephony.SMS_RECEIVED",
       )?.components,
     ).toEqual(["io.example.Sms"]);
     expect(result.unknowns.join(" ")).toContain("protection levels");
+    expect(result.unknowns.join(" ")).toContain(
+      "they stay guard-unknown rather than unguarded",
+    );
+    expect(result.unknowns.join(" ")).toContain(
+      "operation-specific readPermission/writePermission overrides are not projected",
+    );
+  });
+
+  it("keeps provable absence of a guard out of the guard-unknown bucket", () => {
+    const result = projectAttackSurface({
+      ...facts,
+      components: [
+        component({
+          kind: "activity",
+          name: "io.example.Plain",
+          exported: true,
+        }),
+        component({
+          kind: "provider",
+          name: "io.example.Guarded",
+          exported: true,
+          permission: "io.example.permission.PROVIDER",
+          permission_source: "component",
+        }),
+      ],
+    });
+    expect(
+      result.exported_without_permission.map((f) => f.resolved_name),
+    ).toEqual(["io.example.Plain"]);
+    expect(result.exported_guarded.map((f) => f.resolved_name)).toEqual([
+      "io.example.Guarded",
+    ]);
+    expect(result.exported_guard_unknown).toEqual([]);
+    expect(result.unknowns.join(" ")).not.toContain("readPermission");
   });
 
   it("propagates partial component coverage instead of claiming absence", () => {
     const result = projectAttackSurface({
-      ...facts("33"),
+      ...facts,
       component_coverage: "partial",
     });
     expect(result.coverage).toBe("partial");

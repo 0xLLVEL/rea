@@ -3,22 +3,27 @@
 Static analysis ends where packers begin. A packed APK ships encrypted DEX
 behind a stub loader: JADX returns thin wrappers, methods report
 `body_status: "not_available"`, and class counts look small for the APK size.
-This playbook composes existing REA tools into one static → runtime → static
-loop. It adds no new tool; each step names its own authority and cleanup.
+This playbook covers static pack detection and acquiring the complete split set
+for such a target. It adds no new tool, and it stops before decrypting or
+recovering protected code: `CONTRIBUTING.md` excludes purpose-built workflows
+that defeat packing protections and automatically recover protected code, and
+that boundary covers documentation too.
 
 ## 1. Detect packing statically
 
-Run the Fase 1–3 static chain first:
+Run the static chain first:
 
 ```sh
 rea inspect-android-package /targets/Example.apk
-rea project-android-attack-surface '{"package_name": "com.example", "target_sdk": "33", "permissions": [], "components": [], "component_coverage": "complete"}'
+rea inspect-android-class /targets/Example.apk com.example.MainActivity
+rea project-android-attack-surface '{"package_name": "com.example", "components": [], "component_coverage": "complete"}'
 ```
 
 Pack signals: `body_status: "not_available"` on app classes, a custom
 `Application` subclass with `attachBaseContext`, few DEX classes against a
 large APK, and a native loader library in `lib/<abi>/`. Record these as the
-reason runtime work is needed. If the APK is not packed, stop here.
+reason the static inventory is incomplete. If the APK is not packed, continue
+with the ordinary static workflow.
 
 ## 2. Acquire the full split set
 
@@ -31,43 +36,21 @@ rea pull-adb-package emulator-5554 com.example.app --output-directory /tmp/acq
 rea inspect-android-package /tmp/acq/com.example.app/base.apk
 ```
 
-`pm path` enumerates every installed split and each file is digested
-(see `docs/adb-device-analysis.md`). Split-manifest consistency checks ride
+`pm path` enumerates every installed split and each file is digested (see
+`docs/adb-device-analysis.md`). Split-manifest consistency checks ride
 with the open bundletool lanes; until they land, analyze each APK separately
 and keep per-file digests in Evidence.
 
-## 3. Dump decrypted DEX on an isolated emulator
+## 3. Report the gap instead of closing it
 
-Use a caller-supplied emulator and frida-server. REA installs neither; push
-the server explicitly and install the APK as a device-mutating step:
+The static inventory of a packed APK is `partial`, and
+`project_android_attack_surface` propagates that coverage instead of claiming
+absence. Report the pack signals, the split set you acquired, and the classes
+you could not read. Keep the offset between the static view and the real
+implementation explicit rather than filling it in.
 
-```sh
-rea push-adb-file emulator-5554 /tools/frida-server /data/local/tmp/frida-server
-rea install-adb-package emulator-5554 /tmp/app.apk --replace
-```
-
-Spawn paused, load a caller-authored dump script (its SHA-256 is recorded,
-its source is not stored), resume, then pull the dump:
-
-```sh
-rea start-adb-app emulator-5554 com.example.app
-rea read-adb-logcat emulator-5554 --count 200
-rea pull-adb-file emulator-5554 /data/local/tmp/dump.dex --output-directory /tmp/dump
-rea stop-adb-app emulator-5554 com.example.app
-rea uninstall-adb-package emulator-5554 com.example.app
-```
-
-Frida sessions, message budgets (16 MiB), spawn-paused semantics and cleanup
-follow `docs/frida-instrumentation.md`. REA never kills the target; a paused
-spawn stays paused until script cleanup or detach confirms release.
-
-## 4. Re-analyze the dump statically
-
-Feed dumped DEX/APK back through the static chain and link provenance:
-
-`APK sha256 → Frida script sha256 → dumped DEX sha256 → second JADX result`.
-
-Anti-frida, anti-emulator and integrity checks can fail the dump; report that
-as `unknown`, never as a complete unpack. `RegisterNatives` bindings,
-reflection and dynamic loading stay outside the static inventory even after a
-successful dump. Signature verification is `not_performed` throughout.
+REA does document the instrumentation surface it does have, including Frida
+sessions with caller-authored scripts, in
+[frida-instrumentation.md](frida-instrumentation.md). Whether to attach to a
+target at all, and what to run, stays your decision and your authority: no REA
+playbook prescribes recovering protected code.

@@ -83,6 +83,16 @@ describe("projectJniNames", () => {
     expect(uni.methods[0]?.jni_short_name).toBe("Java_pkg_Uni_caf_000e9");
   });
 
+  it("mangles both halves of a supplementary character like javac -h", () => {
+    const result = projectJniNames({
+      class_name: "pkg.Uni",
+      methods: [{ method_name: "\u{10400}method", dex_descriptor: "()V" }],
+    });
+    expect(result.methods[0]?.jni_short_name).toBe(
+      "Java_pkg_Uni__0d801_0dc00method",
+    );
+  });
+
   it("keeps dynamic registration and runtime loading unknown", () => {
     const result = projectJniNames({
       class_name: "pkg.Cls",
@@ -91,7 +101,7 @@ describe("projectJniNames", () => {
     expect(result.unknowns.join(" ")).toContain("RegisterNatives");
   });
 
-  it("reports only the short name when no descriptor is supplied", () => {
+  it("reports only the short name for an explicit null descriptor", () => {
     const result = projectJniNames({
       class_name: "pkg.Cls",
       methods: [{ method_name: "m", dex_descriptor: null }],
@@ -101,8 +111,29 @@ describe("projectJniNames", () => {
       jni_long_name: null,
     });
     expect(result.unknowns.join(" ")).toContain(
-      "no longer reports DEX prototypes",
+      "dex_descriptor that inspect_android_class reports",
     );
+  });
+
+  it("accepts an omitted descriptor as null", () => {
+    const result = projectJniNames({
+      class_name: "pkg.Cls",
+      methods: [{ method_name: "m" }],
+    });
+    expect(result.methods[0]).toMatchObject({
+      dex_descriptor: null,
+      jni_short_name: "Java_pkg_Cls_m",
+      jni_long_name: null,
+    });
+  });
+
+  it("bounds one call's method selection", () => {
+    expect(() =>
+      projectJniNames({
+        class_name: "pkg.Cls",
+        methods: Array.from({ length: 2001 }, () => ({ method_name: "m" })),
+      }),
+    ).toThrow();
   });
 
   it("rejects malformed descriptors instead of guessing", () => {
