@@ -1,5 +1,6 @@
+import { AnalysisAccessDeniedError } from "./analysisErrorCore.js";
+import { expect, it } from "vitest";
 import {
-  AnalysisAccessDeniedError,
   AnalysisInputError,
   AnalysisCapabilityUnavailableError,
   AnalysisCancelledError,
@@ -8,7 +9,6 @@ import {
   AnalysisOutputError,
   AnalysisResourceConstraintError,
 } from "./analysisErrorCore.js";
-import { expect, it } from "vitest";
 import { projectAnalysisError } from "./analysisErrorProjection.js";
 import { ProviderCleanupError } from "./providerCleanupError.js";
 import { ProviderAdapterError } from "./providerAdapterError.js";
