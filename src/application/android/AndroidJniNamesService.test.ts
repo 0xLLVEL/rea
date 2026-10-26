@@ -1,6 +1,49 @@
 import { describe, expect, it } from "vitest";
 
+import { createEvidence } from "../../domain/evidence.js";
+import { ANDROID_APPLICATION_PROVIDER } from "../../domain/investigationProviders.js";
 import { projectAndroidJniNamesEvidence } from "./AndroidJniNamesService.js";
+
+const classEvidence = () =>
+  createEvidence(
+    { path: "/tmp/Example.apk", sha256: "c".repeat(64), format: "apk" },
+    ANDROID_APPLICATION_PROVIDER,
+    {
+      predicateType: "rea.android-class",
+      operation: "inspect_android_class",
+      parameters: {},
+      result: {
+        engine: {
+          name: "jadx",
+          version: null,
+          artifact_sha256: "d".repeat(64),
+          source_revision: null,
+          worker_count: 1,
+          heap_limit_mib: null,
+        },
+        class_name: "pkg.Native",
+        dex_class_name: "pkg.Native",
+        methods: [
+          {
+            name: "nativeInit",
+            dex_method_name: "nativeInit",
+            reported_signature: "void nativeInit(int)",
+            overload_index: 0,
+            is_constructor: false,
+            dex_descriptor: "(I)V",
+          },
+        ],
+        fields: [],
+        inner_classes: [],
+      },
+      rawResult: null,
+      confidence: "observed",
+      authority: "shipped-artifact",
+      environment: null,
+      limitations: [],
+      evidenceLinks: [],
+    },
+  );
 
 describe("projectAndroidJniNamesEvidence", () => {
   it("wraps the projection in derived analyst-inference Evidence", () => {
@@ -14,6 +57,37 @@ describe("projectAndroidJniNamesEvidence", () => {
     expect(result.value.normalized_result).toMatchObject({
       class_name: "pkg.Cls",
       coverage: "complete",
+    });
+  });
+
+  it("links and attributes the projection to the selected class Evidence", () => {
+    const source = classEvidence();
+    const result = projectAndroidJniNamesEvidence({
+      class_name: "pkg.Native",
+      methods: [{ method_name: "nativeInit", dex_descriptor: "(I)V" }],
+      source_evidence: source,
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.evidence_links).toEqual([source.evidence_id]);
+    expect(result.value.parameters).toMatchObject({
+      source_evidence_id: source.evidence_id,
+    });
+    expect(result.value.subject).toMatchObject({
+      local_path: "/tmp/Example.apk",
+      format: "apk",
+      digest: { sha256: "c".repeat(64) },
+    });
+  });
+
+  it("refuses methods the linked class Evidence does not report", () => {
+    const result = projectAndroidJniNamesEvidence({
+      class_name: "pkg.Native",
+      methods: [{ method_name: "nativeInit", dex_descriptor: "(J)V" }],
+      source_evidence: classEvidence(),
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisInputError" },
     });
   });
 

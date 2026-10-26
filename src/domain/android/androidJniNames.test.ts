@@ -100,6 +100,21 @@ describe("projectJniNames spellings", () => {
     );
   });
 
+  it("counts retained descriptors that never reach a long name", () => {
+    // The return type is not mangled into the long name, but the complete
+    // descriptor is echoed per method, so it is part of the budget.
+    const descriptor = `()L${"R".repeat(65_531)};`;
+    expect(() =>
+      projectJniNames({
+        class_name: "C",
+        methods: Array.from({ length: 2000 }, () => ({
+          method_name: "m",
+          dex_descriptor: descriptor,
+        })),
+      }),
+    ).toThrow(/are produced per call/u);
+  });
+
   it("reports only the short name for an explicit null descriptor", () => {
     const result = projectJniNames({
       class_name: "pkg.Cls",

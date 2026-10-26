@@ -200,16 +200,28 @@ Feed the `components` that `inspect-android-package` returns into
 `project_android_attack_surface` to separate exported components without an
 established guard from guarded ones. Components whose permission value is
 unresolved, and every provider with projected `readPermission`/`writePermission`
-overrides (or an inventory that predates `permission_overrides`), stay in a
-guard-unknown bucket rather than being called unguarded: an override replaces or
-clears the base permission for one operation, and its value is not projected. It
-also indexes intent actions and reports foreground-service types and provider
-authorities. A call accepts at most 1000 components, 128 actions or categories
-per component, about 1 MiB of selected declaration text and about 4 MiB of
-projected finding text; pass a subset and describe it with
+overrides, child `<path-permission>` guards, or an inventory that predates
+`permission_overrides`/`path_permissions`, stay in a guard-unknown bucket rather
+than being called unguarded: an override replaces or clears the base permission
+for one operation, a path guard covers only the paths it declares, and neither
+value is projected. It also indexes intent actions and reports foreground-service
+types and provider authorities. A call accepts at most 1000 components, 128
+actions or categories per component, about 1 MiB of selected declaration text and
+about 4 MiB of projected finding text; pass a subset and describe it with
 `component_coverage=partial` for a larger inventory. Findings rank static
 declarations only; protection levels, reachability and exploitability stay
 unknown.
+
+Both projections accept an optional `source_evidence`: pass the
+`inspect-android-package` Evidence for the attack surface, or the
+`inspect-android-class` Evidence for JNI names. Every selected component, class
+and method is then checked against that record, the result copies its artifact
+subject and links its `evidence_id`, and the Evidence parameters record
+`source_evidence_id`. A selection is narrowed from that record, never extended:
+an edited fact is refused instead of being attributed to the artifact. Without
+it the projection still records the exact selection, states that no source
+Evidence was linked, and keeps `evidence_links` empty, so declarations copied
+from different APKs stay distinguishable only when a source is supplied.
 
 For packed or split targets, follow the
 [packed and split APK playbook](android-packed-analysis.md): static pack
@@ -290,7 +302,9 @@ the same source byte limit and explicit truncation reporting.
   `declared_name` and resolved `name`, the declared `exported` value beside
   Android's `exported_default` rule, the effective `permission` with its
   `permission_source`, whether a provider declares `readPermission`/
-  `writePermission` overrides as `permission_overrides`, flattened
+  `writePermission` overrides as `permission_overrides`, whether it declares
+  child `<path-permission>` guards as `path_permissions` (`none`, `present`, or
+  `unknown` when the inventory predates that projection), flattened
   intent-filter `actions` and `categories`, `foreground_service_type`, provider
   `authorities`, and an explicit `intent_filter_count`.
   Signature verification is explicitly `not_performed`.

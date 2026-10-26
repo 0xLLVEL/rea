@@ -402,6 +402,25 @@ it("marks unprojected provider read and write permission overrides partial", () 
   );
 });
 
+it("projects provider path-permission guards as presence only", () => {
+  const manifest =
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><provider android:name=".Paths"><path-permission android:pathPrefix="/files" android:permission="com.example.READ"/></provider><provider android:name=".Guarded" android:permission="com.example.GUARD"><path-permission android:pathPattern=".*" android:writePermission="com.example.WRITE"/></provider><provider android:name=".Loose"><path-permission android:path="/open"/></provider><provider android:name=".Plain"/></application></manifest>';
+  const inventory = parseAndroidManifestComponents(manifest, "complete", "33");
+  expect(
+    inventory.items.map(({ name, path_permissions: paths }) => [name, paths]),
+  ).toEqual([
+    ["com.example.Paths", "present"],
+    ["com.example.Guarded", "present"],
+    ["com.example.Loose", "none"],
+    ["com.example.Plain", "none"],
+  ]);
+  // A path-permission element without a permission attribute guards nothing.
+  expect(inventory.status).toBe("partial");
+  expect(inventory.limitations.join(" ")).toContain(
+    "child <path-permission> guards",
+  );
+});
+
 it("reports no permission overrides for non-provider components", () => {
   const inventory = parseAndroidManifestComponents(
     '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example"><application><activity android:name=".Main" android:readPermission="com.example.READ"/></application></manifest>',

@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { evidenceSchema } from "../evidence.js";
 import { dexDescriptorSchema } from "./androidAnalysis.js";
 
 /**
@@ -14,9 +15,10 @@ const JNI_SYMBOL_TEXT_LIMIT = 65_535;
 
 /**
  * Projected symbol text allowed per call. Every method repeats the mangled
- * class prefix in its short and long name, and mangling expands a UTF-16 unit
- * to at most six ASCII characters, so the input size does not bound the result.
- * The budget is checked on the projected length before any name is built.
+ * class prefix in its short and long name, echoes its full descriptor, and
+ * mangling expands a UTF-16 unit to at most six ASCII characters, so the input
+ * size does not bound the result. The budget is checked on the projected length
+ * before any name is built.
  */
 const JNI_SYMBOL_OUTPUT_TEXT_LIMIT = 4_194_304;
 
@@ -52,6 +54,11 @@ export const androidJniNamesInputSchema = z
       .max(JNI_NAME_METHOD_LIMIT)
       .describe(
         `At most ${String(JNI_NAME_METHOD_LIMIT)} methods per call; split a larger selection by class or method group`,
+      ),
+    source_evidence: evidenceSchema
+      .optional()
+      .describe(
+        "inspect_android_class Evidence these members came from; its artifact subject and identity are linked, and the class and every method must match it",
       ),
   })
   .superRefine((input, context) => {
@@ -138,7 +145,12 @@ const projectedSymbolLength = (input: AndroidJniNamesInput): number => {
     if (method.dex_descriptor !== null && method.dex_descriptor !== undefined) {
       const descriptor = method.dex_descriptor;
       const args = descriptor.slice(1, descriptor.indexOf(")"));
-      total += shortName + JNI_LONG_NAME_SEPARATOR_LENGTH + mangledLength(args);
+      total +=
+        shortName +
+        JNI_LONG_NAME_SEPARATOR_LENGTH +
+        mangledLength(args) +
+        // The complete descriptor is echoed per method, return type included.
+        descriptor.length;
     }
   }
   return total;

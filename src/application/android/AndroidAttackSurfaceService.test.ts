@@ -1,6 +1,68 @@
 import { describe, expect, it } from "vitest";
 
+import { createEvidence } from "../../domain/evidence.js";
+import { ANDROID_APPLICATION_PROVIDER } from "../../domain/investigationProviders.js";
 import { projectAndroidAttackSurfaceEvidence } from "./AndroidAttackSurfaceService.js";
+
+const component = {
+  kind: "activity",
+  declared_name: ".Main",
+  name: "io.example.Main",
+  exported: true,
+  exported_default: null,
+  permission: null,
+  permission_source: "none",
+  permission_overrides: "none",
+  path_permissions: "none",
+  intent_filter_count: 1,
+  actions: ["android.intent.action.MAIN"],
+  categories: [],
+  foreground_service_type: null,
+  authorities: null,
+  target_activity: null,
+} as const;
+
+const packageEvidence = (items: readonly unknown[] = [component]) =>
+  createEvidence(
+    { path: "/tmp/Example.apk", sha256: "a".repeat(64), format: "apk" },
+    ANDROID_APPLICATION_PROVIDER,
+    {
+      predicateType: "rea.android-package",
+      operation: "inspect_android_package",
+      parameters: {},
+      result: {
+        engine: {
+          name: "jadx",
+          version: null,
+          artifact_sha256: "b".repeat(64),
+          source_revision: null,
+          worker_count: 1,
+          heap_limit_mib: null,
+        },
+        package_name: "io.example",
+        version_name: null,
+        version_code: null,
+        min_sdk: null,
+        target_sdk: null,
+        permissions: [],
+        manifest: {
+          status: "complete",
+          text: "<manifest/>",
+          reported_total_bytes: null,
+        },
+        components: { status: "complete", items, limitations: [] },
+        class_count: 0,
+        resource_count: 0,
+        signature_verification: "not_performed",
+      },
+      rawResult: null,
+      confidence: "observed",
+      authority: "shipped-artifact",
+      environment: null,
+      limitations: [],
+      evidenceLinks: [],
+    },
+  );
 
 describe("projectAndroidAttackSurfaceEvidence", () => {
   it("wraps the projection in derived analyst-inference Evidence", () => {
@@ -57,6 +119,53 @@ describe("projectAndroidAttackSurfaceEvidence", () => {
       permissions: [],
       components: [],
       component_coverage: "complete",
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisInputError" },
+    });
+  });
+
+  it("links and attributes the projection to the selected package Evidence", () => {
+    const source = packageEvidence();
+    const result = projectAndroidAttackSurfaceEvidence({
+      package_name: "io.example",
+      components: [component],
+      component_coverage: "complete",
+      source_evidence: source,
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.evidence_links).toEqual([source.evidence_id]);
+    expect(result.value.parameters).toMatchObject({
+      source_evidence_id: source.evidence_id,
+    });
+    expect(result.value.subject).toMatchObject({
+      local_path: "/tmp/Example.apk",
+      format: "apk",
+      digest: { sha256: "a".repeat(64) },
+    });
+  });
+
+  it("records that declarations without a linked source have no APK", () => {
+    const result = projectAndroidAttackSurfaceEvidence({
+      package_name: "io.example",
+      components: [component],
+      component_coverage: "complete",
+    });
+    if (!result.ok) throw result.error;
+    expect(result.value.subject).toBeNull();
+    expect(result.value.evidence_links).toEqual([]);
+    expect(result.value.limitations.join(" ")).toContain(
+      "No source Evidence was linked",
+    );
+  });
+
+  it("refuses components the linked inventory does not report", () => {
+    const result = projectAndroidAttackSurfaceEvidence({
+      package_name: "io.example",
+      components: [{ ...component, permission: "io.example.INVENTED" }],
+      component_coverage: "complete",
+      source_evidence: packageEvidence(),
     });
     expect(result).toMatchObject({
       ok: false,

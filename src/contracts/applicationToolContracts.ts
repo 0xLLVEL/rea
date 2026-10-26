@@ -330,7 +330,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "project_android_jni_names",
     ...toolContractMetadata("project_android_jni_names"),
     description:
-      "Project expected JNI short/long symbol names and the JNA exact name for caller-selected DEX methods without reading an APK or native library. Pass the dex_descriptor that inspect_android_class reports for each method; it may be omitted, and an omitted descriptor reports only the short name. Reports per-method mangled names, overload group sizes, and explicit unknowns for RegisterNatives registration and runtime loading; a name match never establishes invocation. At most 2000 methods per call.",
+      "Project expected JNI short/long symbol names and the JNA default-mapping name for caller-selected DEX methods without reading an APK or native library. Pass the dex_descriptor that inspect_android_class reports for each method; it may be omitted, and an omitted descriptor reports only the short name. Reports per-method mangled names, overload group sizes, and explicit unknowns for RegisterNatives registration, a custom JNA FunctionMapper, and runtime loading; a name match never establishes invocation. Pass the inspect_android_class Evidence as source_evidence to authenticate the selection and copy its artifact subject. At most 2000 methods and about 4 MiB of projected symbol text per call.",
     kind: "application",
     inputSchema: androidJniNamesInputSchema,
     outputSchema: evidenceResultOf(androidJniNamesResultSchema),
@@ -354,7 +354,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "project_android_attack_surface",
     ...toolContractMetadata("project_android_attack_surface"),
     description:
-      "Project structural attack-surface facts from the components that inspect_android_package reports. Separates exported components that an established permission source leaves unguarded from guarded ones, keeps unresolved permissions and provider readPermission/writePermission overrides guard-unknown, indexes intent actions, and reports foreground-service types and provider authorities without claiming protection levels, reachability, or exploitability.",
+      "Project structural attack-surface facts from the components that inspect_android_package reports. Separates exported components that an established permission source leaves unguarded from guarded ones, keeps unresolved permissions, provider readPermission/writePermission overrides and child path-permission guards guard-unknown, indexes intent actions, and reports foreground-service types and provider authorities without claiming protection levels, reachability, or exploitability. Pass that package Evidence as source_evidence to authenticate the components and copy its artifact subject. At most 1000 components per call.",
     kind: "application",
     inputSchema: androidAttackSurfaceInputSchema,
     outputSchema: evidenceResultOf(androidAttackSurfaceResultSchema),

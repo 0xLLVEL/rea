@@ -6,7 +6,9 @@ import {
   coverageUnknown,
   projectAttackSurface,
   PROVIDER_OVERRIDE_NOTE,
+  PROVIDER_PATH_PERMISSION_NOTE,
   providerOverrideUnknown,
+  providerPathPermissionUnknown,
   UNGUARDED_COMPONENT_NOTE,
   UNRESOLVED_GUARD_NOTE,
   unresolvedGuardUnknown,
@@ -23,6 +25,7 @@ const component = (
   permission: null,
   permission_source: "none",
   permission_overrides: "none",
+  path_permissions: "none",
   intent_filter_count: 0,
   actions: [],
   categories: [],
@@ -250,6 +253,38 @@ describe("projectAttackSurface", () => {
       "io.example.Stale",
     ]);
     expect(result.unknowns).toContain(providerOverrideUnknown(1));
+  });
+});
+
+describe("projectAttackSurface provider guards", () => {
+  it("keeps a path-protected provider guard-unknown", () => {
+    const result = projectAttackSurface({
+      ...facts,
+      components: [
+        component({
+          kind: "provider",
+          name: "io.example.Paths",
+          exported: true,
+          path_permissions: "present",
+        }),
+        component({
+          kind: "provider",
+          name: "io.example.StalePaths",
+          exported: true,
+          path_permissions: "unknown",
+        }),
+      ],
+    });
+    // Path guards restrict the paths they declare; the remaining paths and the
+    // guard values are not projected, so neither bucket can be decided.
+    expect(result.exported_without_permission).toEqual([]);
+    expect(
+      result.exported_guard_unknown.map((f) => [f.resolved_name, f.note]),
+    ).toEqual([
+      ["io.example.Paths", PROVIDER_PATH_PERMISSION_NOTE],
+      ["io.example.StalePaths", PROVIDER_PATH_PERMISSION_NOTE],
+    ]);
+    expect(result.unknowns).toContain(providerPathPermissionUnknown(2));
   });
 });
 

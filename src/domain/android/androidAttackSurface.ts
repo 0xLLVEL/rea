@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { evidenceSchema } from "../evidence.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { androidManifestComponentSchema } from "./androidAnalysis.js";
 
@@ -108,6 +109,11 @@ export const androidAttackSurfaceInputSchema = z
         `At most ${String(ATTACK_SURFACE_COMPONENT_LIMIT)} components per call; pass a subset with component_coverage=partial to rank a larger inventory`,
       ),
     component_coverage: z.enum(["complete", "partial", "unknown"]),
+    source_evidence: evidenceSchema
+      .optional()
+      .describe(
+        "inspect_android_package Evidence these declarations came from; its artifact subject and identity are linked, and every component must match that inventory",
+      ),
   })
   .superRefine((input, context) => {
     const selected = selectedTextLength(input);
@@ -141,6 +147,7 @@ export const attackSurfaceFindingSchema = z.strictObject({
     "read-write",
     "unknown",
   ]),
+  path_permissions: z.enum(["none", "present", "unknown"]),
   intent_actions: z.array(z.string()),
   note: z.string(),
 });
@@ -191,6 +198,10 @@ export const UNRESOLVED_GUARD_NOTE =
 export const PROVIDER_OVERRIDE_NOTE =
   "Exported; provider readPermission/writePermission overrides are projected only as present, so neither their value nor the absence of an operation guard is established.";
 
+/** Finding note for an exported provider whose child path guards are not projected. */
+export const PROVIDER_PATH_PERMISSION_NOTE =
+  "Exported; child <path-permission> guards cover only the paths they declare and their values are not projected, so the provider's access guard is not established.";
+
 /** Explanation of unresolved permission values counted in this result. */
 export const unresolvedGuardUnknown = (count: number): string =>
   `${String(count)} exported component(s) have an unresolved permission value; they stay guard-unknown rather than unguarded.`;
@@ -198,6 +209,10 @@ export const unresolvedGuardUnknown = (count: number): string =>
 /** Explanation of exported providers kept guard-unknown by unprojected overrides. */
 export const providerOverrideUnknown = (count: number): string =>
   `${String(count)} exported provider(s) declare android:readPermission or android:writePermission; those override values are not projected, so they stay guard-unknown even where a base permission is declared.`;
+
+/** Explanation of exported providers kept guard-unknown by unprojected path guards. */
+export const providerPathPermissionUnknown = (count: number): string =>
+  `${String(count)} exported provider(s) declare child <path-permission> guards; their paths and permission values are not projected, so those providers stay guard-unknown.`;
 
 /** Explanation of incomplete component coverage. */
 export const coverageUnknown = (coverage: string): string =>
@@ -224,6 +239,7 @@ const toFinding = (
   permission: component.permission,
   permission_source: component.permission_source,
   permission_overrides: component.permission_overrides,
+  path_permissions: component.path_permissions,
   intent_actions: [...component.actions],
   note,
 });
@@ -245,6 +261,7 @@ export const projectAttackSurface = (
   const authorities = new Set<string | null>();
   let unresolvedGuards = 0;
   let providerOverrideGuards = 0;
+  let providerPathGuards = 0;
   for (const component of parsed.components) {
     for (const action of component.actions) {
       const list = actionIndex.get(action) ?? [];
@@ -271,13 +288,24 @@ export const projectAttackSurface = (
     if (!exported) continue;
     if (
       component.kind === "provider" &&
-      component.permission_overrides !== "none"
+      (component.permission_overrides !== "none" ||
+        component.path_permissions !== "none")
     ) {
-      // The producer projects whether readPermission/writePermission exist but
-      // not their values. An override replaces or clears the base permission
-      // for one operation, so the base value does not establish the guard.
-      providerOverrideGuards += 1;
-      guardUnknown.push(toFinding(component, PROVIDER_OVERRIDE_NOTE));
+      // The producer projects whether readPermission/writePermission and child
+      // <path-permission> guards exist but not their values or paths. Either
+      // replaces or clears the base permission for some operations, so the
+      // projected statement does not establish the guard.
+      if (component.permission_overrides !== "none")
+        providerOverrideGuards += 1;
+      if (component.path_permissions !== "none") providerPathGuards += 1;
+      guardUnknown.push(
+        toFinding(
+          component,
+          component.permission_overrides === "none"
+            ? PROVIDER_PATH_PERMISSION_NOTE
+            : PROVIDER_OVERRIDE_NOTE,
+        ),
+      );
     } else if (
       component.permission_source === "component" ||
       component.permission_source === "application"
@@ -297,6 +325,8 @@ export const projectAttackSurface = (
     unknowns.push(unresolvedGuardUnknown(unresolvedGuards));
   if (providerOverrideGuards > 0)
     unknowns.push(providerOverrideUnknown(providerOverrideGuards));
+  if (providerPathGuards > 0)
+    unknowns.push(providerPathPermissionUnknown(providerPathGuards));
   if (parsed.component_coverage !== "complete")
     unknowns.push(coverageUnknown(parsed.component_coverage));
   return androidAttackSurfaceResultSchema.parse({

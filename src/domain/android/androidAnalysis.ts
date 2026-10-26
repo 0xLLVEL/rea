@@ -119,6 +119,13 @@ export const androidManifestComponentSchema = z.strictObject({
   permission_overrides: z
     .enum(["none", "read", "write", "read-write", "unknown"])
     .default("unknown"),
+  /**
+   * Provider child `<path-permission>` guards. `present` means at least one
+   * path guard declares a permission; the paths and values stay in the
+   * manifest text. Older Evidence predates this projection, so an absent
+   * value is unknown.
+   */
+  path_permissions: z.enum(["none", "present", "unknown"]).default("unknown"),
   intent_filter_count: z.number().int().nonnegative(),
   actions: z.array(z.string()),
   categories: z.array(z.string()),
