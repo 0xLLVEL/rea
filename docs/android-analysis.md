@@ -190,8 +190,8 @@ identifies one overload. `overload_group_size` counts the distinct descriptors
 in your selection, so a partial selection under-reports the class's overloads.
 A name match is a static binding hypothesis, not proof of loading or
 invocation; `RegisterNatives` registration stays unknown. A call accepts at most
-2000 methods and 1 MiB of selection text; split a larger selection by class or
-method group.
+2000 methods and about 4 MiB of projected symbol text, which the repeated class
+prefix makes the real bound; split a larger selection by class or method group.
 
 Feed the `components` that `inspect-android-package` returns into
 `project_android_attack_surface` to separate exported components without an

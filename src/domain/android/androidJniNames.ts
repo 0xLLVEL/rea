@@ -13,11 +13,18 @@ const JNI_NAME_METHOD_LIMIT = 2000;
 const JNI_SYMBOL_TEXT_LIMIT = 65_535;
 
 /**
- * Aggregate caller text allowed per call. Mangling expands each UTF-16 unit to
- * at most six ASCII characters, so this also bounds the projected symbols and
- * the Evidence that carries them.
+ * Projected symbol text allowed per call. Every method repeats the mangled
+ * class prefix in its short and long name, and mangling expands a UTF-16 unit
+ * to at most six ASCII characters, so the input size does not bound the result.
+ * The budget is checked on the projected length before any name is built.
  */
-const JNI_SYMBOL_INPUT_BYTES_LIMIT = 1_048_576;
+const JNI_SYMBOL_OUTPUT_TEXT_LIMIT = 4_194_304;
+
+/** `Java_` prefix of every projected symbol. */
+const JNI_SYMBOL_PREFIX_LENGTH = "Java_".length;
+
+/** `__` between a long name and its argument descriptor. */
+const JNI_LONG_NAME_SEPARATOR_LENGTH = 2;
 
 /** One caller-selected DEX method awaiting native-symbol correlation. */
 export const jniMethodInputSchema = z.strictObject({
@@ -48,20 +55,12 @@ export const androidJniNamesInputSchema = z
       ),
   })
   .superRefine((input, context) => {
-    const bytes =
-      Buffer.byteLength(input.class_name, "utf8") +
-      input.methods.reduce(
-        (total, method) =>
-          total +
-          Buffer.byteLength(method.method_name, "utf8") +
-          Buffer.byteLength(method.dex_descriptor ?? "", "utf8"),
-        0,
-      );
-    if (bytes > JNI_SYMBOL_INPUT_BYTES_LIMIT)
+    const projected = projectedSymbolLength(input);
+    if (projected > JNI_SYMBOL_OUTPUT_TEXT_LIMIT)
       context.addIssue({
         code: "custom",
         path: ["methods"],
-        message: `Selection text is ${String(bytes)} bytes; at most ${String(JNI_SYMBOL_INPUT_BYTES_LIMIT)} bytes are projected per call. Split the selection by class or method group.`,
+        message: `Projected symbol text is ${String(projected)} characters; at most ${String(JNI_SYMBOL_OUTPUT_TEXT_LIMIT)} are produced per call. Shorten the class or method names, or split the selection by class or method group.`,
       });
   });
 
@@ -105,6 +104,38 @@ export const MISSING_DESCRIPTOR_NOTE =
 /** Guidance for identities copied from decompiler display names. */
 export const DISPLAY_NAME_NOTE =
   "Supply raw DEX identities: inspect_android_class reports each method's dex_method_name and the class's dex_class_name, because its display names can be decompiler aliases or dotted nested names that do not match a native export.";
+
+/** Length of `mangle(value)` without allocating the mangled string. */
+const mangledLength = (value: string): number => {
+  let length = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value.charAt(index);
+    length +=
+      char === "/" || /^[A-Za-z0-9]$/u.test(char)
+        ? 1
+        : char === "_" || char === ";" || char === "["
+          ? 2
+          : 6;
+  }
+  return length;
+};
+
+/** Characters the projection would emit for one selection, counted cheaply. */
+const projectedSymbolLength = (input: AndroidJniNamesInput): number => {
+  const classPart = mangledLength(input.class_name.replaceAll(".", "/"));
+  let total = 0;
+  for (const method of input.methods) {
+    const methodPart = mangledLength(method.method_name);
+    const shortName = JNI_SYMBOL_PREFIX_LENGTH + classPart + 1 + methodPart;
+    total += shortName + method.method_name.length;
+    if (method.dex_descriptor !== null && method.dex_descriptor !== undefined) {
+      const descriptor = method.dex_descriptor;
+      const args = descriptor.slice(1, descriptor.indexOf(")"));
+      total += shortName + JNI_LONG_NAME_SEPARATOR_LENGTH + mangledLength(args);
+    }
+  }
+  return total;
+};
 
 const hex4 = (code: number): string => code.toString(16).padStart(4, "0");
 

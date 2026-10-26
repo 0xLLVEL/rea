@@ -154,15 +154,24 @@ describe("projectJniNames bounds and unknowns", () => {
     ]);
   });
 
-  it("rejects a selection whose text exceeds the aggregate budget", () => {
+  it("rejects a selection whose projected symbols exceed the output budget", () => {
     expect(() =>
       projectJniNames({
-        class_name: "pkg.Cls",
-        methods: Array.from({ length: 20 }, () => ({
-          method_name: "m".repeat(60_000),
+        class_name: "c".repeat(60_000),
+        methods: Array.from({ length: 100 }, () => ({
+          method_name: "m",
+          dex_descriptor: "()V",
         })),
       }),
-    ).toThrow(/bytes are projected per call/u);
+    ).toThrow(/are produced per call/u);
+  });
+
+  it("accepts a long class name while the projection stays within budget", () => {
+    const result = projectJniNames({
+      class_name: "c".repeat(60_000),
+      methods: [{ method_name: "m", dex_descriptor: "()V" }],
+    });
+    expect(result.methods[0]?.jni_short_name.length).toBeGreaterThan(60_000);
   });
 
   it("bounds one call's method selection", () => {
