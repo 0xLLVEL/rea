@@ -311,12 +311,7 @@ export interface JavaScriptStaticSourceUrlPath {
   readonly directory: boolean;
 }
 
-/** Convert an exact static file URL expression to a POSIX path. */
-export const staticFileUrlPath = (
-  node: t.CallExpression | t.NewExpression,
-  pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
-): string | undefined => staticFileUrlPathFact(node, pathIntrinsics)?.path;
-
+/** Resolve an exact static file URL expression to a POSIX path fact. */
 const staticFileUrlPathFact = (
   node: t.CallExpression | t.NewExpression,
   pathIntrinsics?: JavaScriptStaticPathIntrinsicQuery,
