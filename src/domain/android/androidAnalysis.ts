@@ -1,5 +1,15 @@
 import { z } from "zod";
-import { localPathStringSchema } from "../localPath.js";
+import {
+  absoluteLocalPathStringSchema,
+  localPathStringSchema,
+} from "../localPath.js";
+import { androidManifestComponentsSchema } from "./androidManifestComponents.js";
+import {
+  androidViewRequestSchema,
+  validateAndroidPackageDelivery,
+} from "./androidPackageQuery.js";
+import { androidMappingReportSchema } from "./androidMapping.js";
+import { dexDescriptorSchema } from "./dexTypes.js";
 
 const target = {
   path: localPathStringSchema.describe(
@@ -9,6 +19,13 @@ const target = {
 const classTarget = {
   ...target,
   class_name: z.string().min(1).describe("Exact fully qualified class name"),
+};
+const mappingPath = {
+  mapping_path: absoluteLocalPathStringSchema
+    .optional()
+    .describe(
+      "Absolute local R8/ProGuard mapping.txt; names are annotated, never replaced",
+    ),
 };
 
 /** Caller intent for static Android inspection, independent of its engine. */
@@ -20,9 +37,10 @@ export const androidInputSchemas = {
       .string()
       .describe("Case-sensitive class-name substring; empty lists all classes"),
   }),
-  inspect_android_class: z.strictObject(classTarget),
+  inspect_android_class: z.strictObject({ ...classTarget, ...mappingPath }),
   inspect_android_method: z.strictObject({
     ...classTarget,
+    ...mappingPath,
     method_name: z.string().min(1),
     overload_index: z
       .int()
@@ -53,9 +71,22 @@ export const androidInputSchemas = {
 
 /** Optional retained delivery is separate from the engine's APK request. */
 export const androidPackageInspectionInputSchema =
-  androidInputSchemas.inspect_android_package.extend({
+  androidInputSchemas.inspect_android_package
+    .extend({
+      detail: z.enum(["complete", "summary"]).optional(),
+      view: androidViewRequestSchema.optional(),
+    })
+    .superRefine(validateAndroidPackageDelivery);
+
+/** Delivery is an adapter/application choice, never a provider analysis option. */
+export const androidSymbolInspectionInputSchemas = {
+  inspect_android_class: androidInputSchemas.inspect_android_class.extend({
     detail: z.enum(["complete", "summary"]).optional(),
-  });
+  }),
+  inspect_android_method: androidInputSchemas.inspect_android_method.extend({
+    detail: z.enum(["complete", "summary"]).optional(),
+  }),
+} as const;
 
 /** Supported static Android operations. */
 export type AndroidOperation = keyof typeof androidInputSchemas;
@@ -96,61 +127,6 @@ const textCoverage = z.strictObject({
   text: z.string(),
   reported_total_bytes: z.int().nonnegative().nullable(),
 });
-
-/** One projected manifest component; consumers narrow this exact shape. */
-export const androidManifestComponentSchema = z.strictObject({
-  kind: z.enum([
-    "activity",
-    "activity-alias",
-    "service",
-    "receiver",
-    "provider",
-  ]),
-  declared_name: z.string(),
-  name: z.string(),
-  exported: z.boolean().nullable(),
-  exported_default: z.boolean().nullable(),
-  permission: z.string().nullable(),
-  permission_source: z.enum(["component", "application", "none", "unknown"]),
-  /**
-   * Provider-level `android:readPermission`/`android:writePermission` overrides.
-   * Older Evidence predates this projection, so an absent value is unknown.
-   */
-  permission_overrides: z
-    .enum(["none", "read", "write", "read-write", "unknown"])
-    .default("unknown"),
-  /**
-   * Provider child `<path-permission>` guards. `present` means at least one
-   * path guard declares a permission; the paths and values stay in the
-   * manifest text. Older Evidence predates this projection, so an absent
-   * value is unknown.
-   */
-  path_permissions: z.enum(["none", "present", "unknown"]).default("unknown"),
-  intent_filter_count: z.number().int().nonnegative(),
-  actions: z.array(z.string()),
-  categories: z.array(z.string()),
-  foreground_service_type: z.string().nullable(),
-  authorities: z.array(z.string()).nullable(),
-  target_activity: z.string().nullable(),
-});
-
-/**
- * Static component projection of the decoded manifest. The export default is
- * Android's documented rule for an absent android:exported when one applies;
- * null also means the default is unknown or an explicit declaration is
- * required. This is not a merged-manifest or runtime observation.
- */
-const manifestComponents = z.strictObject({
-  status: z.enum(["complete", "partial", "unavailable"]),
-  items: z.array(androidManifestComponentSchema),
-  limitations: z.array(z.string()),
-});
-/** A DEX prototype; hex parentheses also keep the advertised class valid in v mode. */
-export const dexDescriptorSchema = z
-  .string()
-  .regex(
-    /^\((?:\[*(?:[ZBSCIJFD]|L[^;\x28\x29]+;))*\)(?:V|\[*(?:[ZBSCIJFD]|L[^;\x28\x29]+;))$/u,
-  );
 
 const integral = <Type extends string>(type: Type, min: number, max: number) =>
   z.strictObject({
@@ -199,8 +175,12 @@ export const dexStaticValueSchema = z.discriminatedUnion("type", [
 
 const method = z.strictObject({
   name: z.string(),
-  /** Raw DEX method name; the display name can be a decompiler alias. */
-  dex_method_name: z.string().min(1),
+  /**
+   * Raw DEX method name; the display name can be a decompiler alias. Evidence
+   * retained before this projection was recorded omits it, so omission stays
+   * unprojected rather than inventing an identity.
+   */
+  dex_method_name: z.string().min(1).optional(),
   reported_signature: z.string(),
   overload_index: z.int().nonnegative(),
   is_constructor: z.boolean(),
@@ -229,7 +209,7 @@ export const androidResultSchemas = {
     manifest: textCoverage,
     // Evidence retained before the component projection existed re-parses
     // with an explicit unavailable inventory; current results always carry it.
-    components: manifestComponents.default(() => ({
+    components: androidManifestComponentsSchema.default(() => ({
       status: "unavailable" as const,
       items: [],
       limitations: [
@@ -256,8 +236,12 @@ export const androidResultSchemas = {
   inspect_android_class: z.strictObject({
     ...common,
     class_name: z.string(),
-    /** Raw DEX binary class name (`$` for nested classes). */
-    dex_class_name: z.string().min(1),
+    /**
+     * Raw DEX binary class name (`$` for nested classes). Evidence retained
+     * before this projection was recorded omits it, so omission stays
+     * unprojected rather than inventing an identity.
+     */
+    dex_class_name: z.string().min(1).optional(),
     methods: z.array(method),
     fields: z.array(
       z.strictObject({
@@ -268,6 +252,7 @@ export const androidResultSchemas = {
       }),
     ),
     inner_classes: z.array(z.string()),
+    mapping: androidMappingReportSchema.exactOptional(),
   }),
   inspect_android_method: z.strictObject({
     ...common,
@@ -279,6 +264,7 @@ export const androidResultSchemas = {
     fell_back: z.boolean(),
     markers: z.array(z.string()),
     source: textCoverage,
+    mapping: androidMappingReportSchema.exactOptional(),
   }),
   trace_android_references: z.strictObject({
     ...common,

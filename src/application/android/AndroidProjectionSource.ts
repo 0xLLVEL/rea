@@ -1,17 +1,13 @@
-import type { z } from "zod";
-
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
-import {
-  androidManifestComponentSchema,
-  androidResultSchemas,
-} from "../../domain/android/androidAnalysis.js";
+import { androidResultSchemas } from "../../domain/android/androidAnalysis.js";
+import type { AttackSurfaceComponent } from "../../domain/android/androidAttackSurface.js";
 import type { Evidence, EvidenceSubjectTarget } from "../../domain/evidence.js";
 import { safeParseEvidence } from "../../domain/evidenceValidation.js";
 import { err, ok, type Result } from "../../domain/result.js";
 
-/** One caller-selected manifest component, as the inventory reports it. */
-type ManifestComponent = z.infer<typeof androidManifestComponentSchema>;
+/** One caller-selected declaration, shaped as the projection consumes it. */
+type ManifestComponent = AttackSurfaceComponent;
 
 /** Refuse a linked source that cannot establish the requested provenance. */
 const sourceInputError = (
@@ -202,6 +198,14 @@ export const authenticateClassSelection = (
         "source_evidence does not carry an inspect_android_class result; recreate it with the current REA release",
       ),
     );
+  if (parsed.data.dex_class_name === undefined)
+    return err(
+      sourceInputError(
+        operation,
+        "source_evidence",
+        "the linked Evidence predates raw DEX identity reporting, so the selection cannot be authenticated against it; inspect the class with the current REA release or omit source_evidence",
+      ),
+    );
   if (parsed.data.dex_class_name !== selection.class_name)
     return err(
       sourceInputError(
@@ -211,12 +215,22 @@ export const authenticateClassSelection = (
       ),
     );
   const reported = new Set(
-    parsed.data.methods.map(
-      (method) => `${method.dex_method_name}\u0000${method.dex_descriptor}`,
-    ),
+    parsed.data.methods
+      .filter(
+        (method): method is typeof method & { dex_method_name: string } =>
+          method.dex_method_name !== undefined,
+      )
+      .map(
+        (method) => `${method.dex_method_name}\u0000${method.dex_descriptor}`,
+      ),
   );
   const reportedNames = new Set(
-    parsed.data.methods.map((method) => method.dex_method_name),
+    parsed.data.methods
+      .filter(
+        (method): method is typeof method & { dex_method_name: string } =>
+          method.dex_method_name !== undefined,
+      )
+      .map((method) => method.dex_method_name),
   );
   for (const [index, method] of selection.methods.entries()) {
     const matches =

@@ -2,9 +2,17 @@ import { z } from "zod";
 import {
   androidInputSchemas,
   androidPackageInspectionInputSchema,
+  androidSymbolInspectionInputSchemas,
   androidResultSchemas,
 } from "../../domain/android/androidAnalysis.js";
-import { androidPackageSummaryViewResultSchema } from "../../domain/analysisView/analysisView.js";
+import {
+  androidPackageSummaryViewResultSchema,
+  androidManifestViewResultSchema,
+  androidComponentsViewResultSchema,
+  androidComponentSummaryViewResultSchema,
+  androidClassSummaryViewResultSchema,
+  androidMethodSummaryViewResultSchema,
+} from "../../domain/analysisView/analysisView.js";
 import type { ToolContract } from "../toolContractTypes.js";
 import { evidenceResultOf } from "../toolOutputSchemaPrimitives.js";
 import { toolContractMetadata } from "../toolEffects.js";
@@ -15,13 +23,16 @@ export const ANDROID_TOOL_CONTRACTS = [
     name: "inspect_android_package",
     ...toolContractMetadata("inspect_android_package"),
     description:
-      'Inspect a local APK\'s package, SDK and permission declarations, decoded manifest and class/resource counts, with a bounded static component projection. Omitted or complete detail preserves the complete result. Select detail: "summary" for all declarations, engine identity and counts without decoded manifest text or duplicate raw calls; retains the complete source and returns a distinct linked inspect_analysis_view summary. Read the exact retained manifest with view kind android, facet manifest, offset and limit (UTF-16 code units), using normalized_result.parent_evidence_id. Does not execute the APK or verify signatures. Requires a caller-supplied JADX MCP JAR and JDK; uses one worker in an isolated temporary workspace.',
+      'Inspect a local APK\'s package, SDK and permission declarations, decoded manifest and class/resource counts, with a bounded static component projection. Omitted or complete detail preserves the complete result. Select detail: "summary" for all declarations, engine identity and counts without decoded manifest text or duplicate raw calls; retains the complete source and returns a distinct linked inspect_analysis_view summary. With summary detail, optionally select view kind android: facet components supports offset/limit, fields and exact kinds/names/actions/exported filters; source_index preserves the retained parent array ordinal and declaration_coverage preserves historical unknowns. Facet component-summary counts selected kinds and exported declarations separately from defaults. Facet manifest pages exact UTF-16 text. Reuse the same views with inspect_analysis_view and normalized_result.parent_evidence_id; complete detail rejects view selection. Does not execute the APK or verify signatures. Requires a caller-supplied JADX MCP JAR and JDK; uses one worker in an isolated temporary workspace.',
     kind: "android-provider",
     inputSchema: androidPackageInspectionInputSchema,
     outputSchema: evidenceResultOf(
       z.union([
         androidResultSchemas.inspect_android_package,
         androidPackageSummaryViewResultSchema,
+        androidManifestViewResultSchema,
+        androidComponentsViewResultSchema,
+        androidComponentSummaryViewResultSchema,
       ]),
     ),
     examples: [
@@ -29,6 +40,28 @@ export const ANDROID_TOOL_CONTRACTS = [
       {
         title: "Inspect APK declarations with retained manifest",
         input: { path: "/tmp/Example.apk", detail: "summary" },
+      },
+      {
+        title: "Read selected VIEW handlers with retained complete Evidence",
+        input: {
+          path: "/tmp/Example.apk",
+          detail: "summary",
+          view: {
+            kind: "android",
+            facet: "components",
+            offset: 0,
+            limit: 20,
+            actions: ["android.intent.action.VIEW"],
+            fields: [
+              "kind",
+              "name",
+              "enabled",
+              "process",
+              "intent_filters",
+              "location",
+            ],
+          },
+        },
       },
     ],
   },
@@ -51,14 +84,28 @@ export const ANDROID_TOOL_CONTRACTS = [
     name: "inspect_android_class",
     ...toolContractMetadata("inspect_android_class"),
     description:
-      "Inspect one exact Android class's parsed methods, fields and inner classes, including synthetic members. Returns display signatures, exact DEX prototypes and encoded static final field values without generating source. A prototype is not a complete raw method ID; overload indices remain consistent within the artifact and engine session.",
+      "Inspect one exact Android class's parsed methods, fields and inner classes, including synthetic members. Returns display signatures, exact DEX prototypes and encoded static final field values without generating source. A prototype is not a complete raw method ID; overload indices remain consistent within the artifact and engine session. Optional mapping_path annotates observed raw DEX names with R8/ProGuard mapped names in a separate mapping block, verified by DEX type or prototype; observed names stay primary. Select detail summary to retain complete Evidence and return these normalized symbols without duplicate raw provider calls; omitted or complete detail preserves the complete inline response.",
     kind: "android-provider",
-    inputSchema: androidInputSchemas.inspect_android_class,
-    outputSchema: evidenceResultOf(androidResultSchemas.inspect_android_class),
+    inputSchema: androidSymbolInspectionInputSchemas.inspect_android_class,
+    outputSchema: evidenceResultOf(
+      z.union([
+        androidResultSchemas.inspect_android_class,
+        androidClassSummaryViewResultSchema,
+      ]),
+    ),
     examples: [
       {
         title: "Inspect a class",
         input: { path: "/tmp/Example.apk", class_name: "example.MainActivity" },
+      },
+      {
+        title: "Annotate an obfuscated class with its R8 mapping",
+        input: {
+          path: "/tmp/Example.apk",
+          class_name: "a.b",
+          mapping_path: "/tmp/mapping.txt",
+          detail: "summary",
+        },
       },
     ],
   },
@@ -66,10 +113,15 @@ export const ANDROID_TOOL_CONTRACTS = [
     name: "inspect_android_method",
     ...toolContractMetadata("inspect_android_method"),
     description:
-      "Decompile one Android method with smali fallback. Requires explicit overload_index when multiple methods share a name. Reports its DEX prototype, representation, fallback markers and source truncation; display signatures may be aliases.",
+      "Decompile one Android method with smali fallback. Requires explicit overload_index when multiple methods share a name. Reports its DEX prototype, representation, fallback markers and source truncation; display signatures may be aliases. Optional mapping_path adds R8/ProGuard mapped names for the class and selected method without replacing observed names. Prefer detail summary to retain complete Evidence and return the selected body and annotations without repeating raw class metadata. Omitted or complete detail preserves complete inline Evidence.",
     kind: "android-provider",
-    inputSchema: androidInputSchemas.inspect_android_method,
-    outputSchema: evidenceResultOf(androidResultSchemas.inspect_android_method),
+    inputSchema: androidSymbolInspectionInputSchemas.inspect_android_method,
+    outputSchema: evidenceResultOf(
+      z.union([
+        androidResultSchemas.inspect_android_method,
+        androidMethodSummaryViewResultSchema,
+      ]),
+    ),
     examples: [
       {
         title: "Decompile a method",

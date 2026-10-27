@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { evidenceInputSchema } from "../evidenceReference.js";
-import { dexDescriptorSchema } from "./androidAnalysis.js";
+import { dexDescriptorSchema } from "./dexTypes.js";
 
 /**
  * One request projects at most this many methods. Each method yields four names

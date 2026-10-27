@@ -1,3 +1,4 @@
+import { analysisViewCoverageSchema } from "./analysisViewCoverage.js";
 import {
   javaScriptRouteInventorySourceSchema,
   javaScriptRouteInventorySchema,
@@ -303,7 +304,18 @@ import {
   androidPackageSummarySchema,
   androidViewRequestSchema,
   androidManifestViewItemSchema,
+  androidManifestViewRequestSchema,
+  androidComponentsViewRequestSchema,
+  androidComponentSummaryViewRequestSchema,
+  androidComponentViewRowSchema,
+  androidComponentViewContextSchema,
+  androidComponentSummarySchema,
 } from "./androidPackageView.js";
+import {
+  projectAndroidSymbolSummary,
+  androidClassSummarySchema,
+  androidMethodSummarySchema,
+} from "./androidSymbolView.js";
 import {
   projectDartAotView,
   dartAotSummarySchema,
@@ -326,7 +338,13 @@ const facetViewSchema = z.strictObject({
 const indexSelectorSchema = z.strictObject({
   index: z.int().nonnegative(),
 });
-const nameSelectorSchema = z.strictObject({ name: z.string() });
+const nameSelectorSchema = z.strictObject({
+  name: z
+    .string()
+    .describe(
+      "Exact UTF-8 section or symbol name, matched against retained source bytes. Use index for non-UTF-8 names or unresolved name bytes.",
+    ),
+});
 const pathSelectorSchema = z.strictObject({
   path: z
     .string()
@@ -480,14 +498,6 @@ export const inspectAnalysisViewInputSchema = z.strictObject({
   view: analysisViewRequestSchema,
 });
 
-const coverageSchema = z.strictObject({
-  status: z.enum(["complete-within-view", "page", "empty"]),
-  examined: z.int().nonnegative(),
-  total: z.int().nonnegative(),
-  next_offset: z.int().nonnegative().nullable(),
-  exhausted: z.boolean(),
-});
-
 const artifactSchema = z.strictObject({
   path: z
     .string()
@@ -554,6 +564,8 @@ const viewResultBase = {
     "inspect_managed_members",
     "inspect_web_network_capture",
     "inspect_android_package",
+    "inspect_android_class",
+    "inspect_android_method",
     "inspect_pcap_capture",
     "inspect_dart_aot",
     "inspect_il2cpp_metadata",
@@ -566,7 +578,7 @@ const viewResultBase = {
   parent_digest: digestSchema,
   view_digest: digestSchema,
   artifact: artifactSchema,
-  coverage: coverageSchema,
+  coverage: analysisViewCoverageSchema,
   limitations: z.array(z.string()),
   unknowns: z.array(z.string()),
 } as const;
@@ -858,6 +870,54 @@ export const androidPackageSummaryViewResultSchema = z.strictObject({
   parent_operation: z.literal("inspect_android_package"),
   summary: androidPackageSummarySchema,
 });
+
+/** Exact class facts with complete raw protocol Evidence retained separately. */
+export const androidClassSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_android_class"),
+  summary: androidClassSummarySchema,
+});
+
+/** Exact selected method body, source coverage and optional mapping facts. */
+export const androidMethodSummaryViewResultSchema = z.strictObject({
+  ...summaryViewResultBase,
+  parent_operation: z.literal("inspect_android_method"),
+  summary: androidMethodSummarySchema,
+});
+
+/** Legacy manifest views keep their original shape; new facets are explicit. */
+export const androidManifestViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  kind: z.literal("android"),
+  facet: z.literal("manifest").optional(),
+  view: androidManifestViewRequestSchema,
+  item: androidManifestViewItemSchema,
+  parent_operation: z.literal("inspect_android_package"),
+});
+export const androidComponentsViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  ...androidComponentViewContextSchema.shape,
+  kind: z.literal("android"),
+  facet: z.literal("components"),
+  view: androidComponentsViewRequestSchema,
+  items: z.array(androidComponentViewRowSchema),
+  byte_limited: z.boolean(),
+  parent_operation: z.literal("inspect_android_package"),
+});
+export const androidComponentSummaryViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  ...androidComponentViewContextSchema.shape,
+  kind: z.literal("android"),
+  facet: z.literal("component-summary"),
+  view: androidComponentSummaryViewRequestSchema,
+  summary: androidComponentSummarySchema,
+  parent_operation: z.literal("inspect_android_package"),
+});
+const androidPackageViewResultSchema = z.discriminatedUnion("facet", [
+  androidManifestViewResultSchema,
+  androidComponentsViewResultSchema,
+  androidComponentSummaryViewResultSchema,
+]);
 
 export const pcapCaptureSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
@@ -1216,6 +1276,8 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     webNetworkCaptureSummaryViewResultSchema,
     browserScenarioSummaryViewResultSchema,
     androidPackageSummaryViewResultSchema,
+    androidClassSummaryViewResultSchema,
+    androidMethodSummaryViewResultSchema,
     pcapCaptureSummaryViewResultSchema,
     dartAotSummaryViewResultSchema,
     il2cppMetadataSummaryViewResultSchema,
@@ -1389,13 +1451,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
     ...managedMembersViewContextSchema.shape,
     parent_operation: z.literal("inspect_managed_members"),
   }),
-  z.strictObject({
-    kind: z.literal("android"),
-    view: androidViewRequestSchema,
-    item: androidManifestViewItemSchema,
-    ...viewResultBase,
-    parent_operation: z.literal("inspect_android_package"),
-  }),
+  androidPackageViewResultSchema,
   z.strictObject({
     kind: z.literal("dart-aot"),
     view: dartAotViewRequestSchema,
@@ -1432,7 +1488,6 @@ export type InspectAnalysisViewInput = z.output<
   typeof inspectAnalysisViewInputSchema
 >;
 export type AnalysisViewResult = z.output<typeof analysisViewResultSchema>;
-export type AnalysisViewCoverage = z.output<typeof coverageSchema>;
 
 /** Parent record already resolved from inline Evidence or a session reference. */
 export interface AnalysisViewParent {
@@ -1445,7 +1500,7 @@ export interface AnalysisViewParent {
   readonly environment?: Evidence["environment"];
   /** The owner proved normalizedResult belongs to a sealed, deep-frozen Evidence snapshot. */
   readonly sealedResult?: boolean;
-  /** Preserve the authenticated source identity, including explicit absence. */
+  /** Subject presentation for this delivery, including explicit absence. */
   readonly subject?: Evidence["subject"];
   readonly limitations: readonly string[];
   readonly artifact?: { readonly path: string; readonly sha256: string } | null;
@@ -1542,6 +1597,8 @@ const retainedViewProjectors = new Map<string, typeof projectWasmArtifactView>([
   ["inspect_managed_artifact", projectManagedArtifactView],
   ["inspect_managed_members", projectManagedMemberView],
   ["inspect_android_package", projectAndroidPackageView],
+  ["inspect_android_class", projectAndroidSymbolSummary],
+  ["inspect_android_method", projectAndroidSymbolSummary],
   ["capture_browser_scenario", projectBrowserScenarioView],
   ["inspect_dart_aot", projectDartAotView],
   ["inspect_il2cpp_metadata", projectIl2cppMetadataView],

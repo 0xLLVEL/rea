@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { androidManifestComponentSchema } from "./androidAnalysis.js";
+import { androidManifestComponentSchema } from "./androidManifestComponents.js";
 import {
   ANDROID_ATTACK_SURFACE_UNKNOWNS,
   coverageUnknown,
@@ -35,6 +35,7 @@ const component = (
   foreground_service_type: null,
   authorities: null,
   target_activity: null,
+  declaration_coverage: "unknown",
   ...overrides,
 });
 

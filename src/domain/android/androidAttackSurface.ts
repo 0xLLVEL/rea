@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { evidenceInputSchema } from "../evidenceReference.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { androidManifestComponentSchema } from "./androidAnalysis.js";
+import { androidManifestComponentSchema } from "./androidManifestComponents.js";
 
 /** One request projects at most this many components. */
 const ATTACK_SURFACE_COMPONENT_LIMIT = 1000;
@@ -33,30 +33,66 @@ const ATTACK_SURFACE_OUTPUT_TEXT_LIMIT = 4_194_304;
 /** Fixed keys and enum values one finding carries besides its selected values. */
 const ATTACK_SURFACE_FINDING_OVERHEAD = 256;
 
-/** One inventory component with each caller-selected field bounded. */
-const attackSurfaceComponentSchema = androidManifestComponentSchema.extend({
-  declared_name: z.string().max(ATTACK_SURFACE_TEXT_LIMIT),
-  name: z.string().max(ATTACK_SURFACE_TEXT_LIMIT),
-  permission: z.string().max(ATTACK_SURFACE_TEXT_LIMIT).nullable(),
-  actions: z
-    .array(z.string().max(ATTACK_SURFACE_TEXT_LIMIT))
-    .max(ATTACK_SURFACE_ACTION_LIMIT)
-    .describe(
-      `At most ${String(ATTACK_SURFACE_ACTION_LIMIT)} actions per component`,
-    ),
-  categories: z
-    .array(z.string().max(ATTACK_SURFACE_TEXT_LIMIT))
-    .max(ATTACK_SURFACE_ACTION_LIMIT),
-  foreground_service_type: z.string().max(ATTACK_SURFACE_TEXT_LIMIT).nullable(),
-  authorities: z
-    .array(z.string().max(ATTACK_SURFACE_TEXT_LIMIT))
-    .max(ATTACK_SURFACE_AUTHORITY_LIMIT)
-    .nullable()
-    .describe(
-      `At most ${String(ATTACK_SURFACE_AUTHORITY_LIMIT)} authorities per provider`,
-    ),
-  target_activity: z.string().max(ATTACK_SURFACE_TEXT_LIMIT).nullable(),
+/**
+ * The declaration facts this projection, its provenance checks and the
+ * linked-Evidence authentication consume. The producing inventory also
+ * reports detail facets this projection never reads (intent filters,
+ * metadata, locations, enabled state); accepting those without advertising
+ * them keeps a selection copied from the current inventory valid while the
+ * advertised schema stays shallow enough for inline compact presentation.
+ */
+const attackSurfaceComponentFacts = androidManifestComponentSchema.pick({
+  kind: true,
+  declared_name: true,
+  name: true,
+  exported: true,
+  exported_default: true,
+  permission: true,
+  permission_source: true,
+  permission_overrides: true,
+  path_permissions: true,
+  intent_filter_count: true,
+  actions: true,
+  categories: true,
+  foreground_service_type: true,
+  authorities: true,
+  target_activity: true,
 });
+
+/** One inventory component with each caller-selected field bounded. */
+const attackSurfaceComponentSchema = z
+  .object(attackSurfaceComponentFacts.shape)
+  .extend({
+    declared_name: z.string().max(ATTACK_SURFACE_TEXT_LIMIT),
+    name: z.string().max(ATTACK_SURFACE_TEXT_LIMIT),
+    permission: z.string().max(ATTACK_SURFACE_TEXT_LIMIT).nullable(),
+    actions: z
+      .array(z.string().max(ATTACK_SURFACE_TEXT_LIMIT))
+      .max(ATTACK_SURFACE_ACTION_LIMIT)
+      .describe(
+        `At most ${String(ATTACK_SURFACE_ACTION_LIMIT)} actions per component`,
+      ),
+    categories: z
+      .array(z.string().max(ATTACK_SURFACE_TEXT_LIMIT))
+      .max(ATTACK_SURFACE_ACTION_LIMIT),
+    foreground_service_type: z
+      .string()
+      .max(ATTACK_SURFACE_TEXT_LIMIT)
+      .nullable(),
+    authorities: z
+      .array(z.string().max(ATTACK_SURFACE_TEXT_LIMIT))
+      .max(ATTACK_SURFACE_AUTHORITY_LIMIT)
+      .nullable()
+      .describe(
+        `At most ${String(ATTACK_SURFACE_AUTHORITY_LIMIT)} authorities per provider`,
+      ),
+    target_activity: z.string().max(ATTACK_SURFACE_TEXT_LIMIT).nullable(),
+  });
+
+/** A component shaped as this projection parses and consumes it. */
+export type AttackSurfaceComponent = z.output<
+  typeof attackSurfaceComponentSchema
+>;
 
 /** Characters the selection repeats in findings, the index and Evidence. */
 const selectedTextLength = (input: AndroidAttackSurfaceInput): number => {
@@ -271,7 +307,7 @@ export const coverageUnknown = (coverage: string): string =>
 
 /** How the effective export state was established: declared, defaulted, or unresolved. */
 const exportedSource = (
-  component: z.infer<typeof androidManifestComponentSchema>,
+  component: AttackSurfaceComponent,
 ): "explicit" | "implicit" | "unknown" =>
   component.exported !== null
     ? "explicit"
@@ -280,7 +316,7 @@ const exportedSource = (
       : "unknown";
 
 const toFinding = (
-  component: z.infer<typeof androidManifestComponentSchema>,
+  component: AttackSurfaceComponent,
   note: string,
 ): AttackSurfaceFinding => ({
   kind: component.kind,

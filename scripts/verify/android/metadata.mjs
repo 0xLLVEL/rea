@@ -83,6 +83,10 @@ export const verifyAndroidMetadata = async ({
     );
     assert.match(
       result.stdout,
+      /DEFAULT_PACKAGE_SELECTOR_REGRESSION_PASS raw=true display=true metadata=true method=true references=true frozen=true/u,
+    );
+    assert.match(
+      result.stdout,
       /INITIALIZER_REGRESSION_PASS folded=2 bounded=true/u,
     );
     assert.match(
@@ -96,6 +100,10 @@ export const verifyAndroidMetadata = async ({
     assert.match(
       result.stdout,
       /CONSTANT_FIELD_REGRESSION_PASS encoded=9 absent=4 opt_in=true/u,
+    );
+    assert.match(
+      result.stdout,
+      /RAW_MEMBER_NAME_REGRESSION_PASS reserved=true overloads=2 inner=true/u,
     );
     assert.match(
       result.stdout,
