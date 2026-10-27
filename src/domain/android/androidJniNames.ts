@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { evidenceSchema } from "../evidence.js";
+import { evidenceInputSchema } from "../evidenceReference.js";
 import { dexDescriptorSchema } from "./androidAnalysis.js";
 
 /**
@@ -55,10 +55,10 @@ export const androidJniNamesInputSchema = z
       .describe(
         `At most ${String(JNI_NAME_METHOD_LIMIT)} methods per call; split a larger selection by class or method group`,
       ),
-    source_evidence: evidenceSchema
+    source_evidence: evidenceInputSchema
       .optional()
       .describe(
-        "inspect_android_class Evidence these members came from; its artifact subject and identity are linked, and the class and every method must match it",
+        "inspect_android_class Evidence these members came from, as its retained reference or inline record; its artifact subject and identity are linked, and the class and every method must match it",
       ),
   })
   .superRefine((input, context) => {

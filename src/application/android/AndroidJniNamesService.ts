@@ -9,15 +9,24 @@ import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.
 import { err, ok, type Result } from "../../domain/result.js";
 import { ANDROID_APPLICATION_PROVIDER } from "../../domain/investigationProviders.js";
 import {
+  resolveEvidenceInput,
+  type EvidenceLookup,
+} from "../EvidenceInputResolver.js";
+import {
   authenticateClassSelection,
   projectionSourceTarget,
 } from "./AndroidProjectionSource.js";
 
 const OPERATION = "project_android_jni_names" as const;
 
-/** Project expected JNI/JNA symbol names for caller-selected DEX methods. */
+/**
+ * Project expected JNI/JNA symbol names for caller-selected DEX methods.
+ * A retained source reference resolves through the session's Evidence ledger
+ * before authentication; an inline record passes through.
+ */
 export const projectAndroidJniNamesEvidence = (
   rawInput: unknown,
+  lookup?: EvidenceLookup,
 ): Result<Evidence, AnalysisError> => {
   const parsed = androidJniNamesInputSchema.safeParse(rawInput);
   if (!parsed.success)
@@ -26,14 +35,17 @@ export const projectAndroidJniNamesEvidence = (
         cause: parsed.error,
       }),
     );
-  const source = authenticateClassSelection(
-    OPERATION,
-    parsed.data.source_evidence,
-    {
-      class_name: parsed.data.class_name,
-      methods: parsed.data.methods,
-    },
-  );
+  const selected = parsed.data.source_evidence;
+  let linked: Evidence | undefined;
+  if (selected !== undefined) {
+    const resolved = resolveEvidenceInput(selected, lookup);
+    if (!resolved.ok) return resolved;
+    linked = resolved.value;
+  }
+  const source = authenticateClassSelection(OPERATION, linked, {
+    class_name: parsed.data.class_name,
+    methods: parsed.data.methods,
+  });
   if (!source.ok) return source;
   try {
     const result = projectJniNames({

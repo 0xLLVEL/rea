@@ -28,7 +28,13 @@ export const registerProjectAndroidAttackSurfaceTool = (
           const result = await logToolExecution(
             options.logger,
             contract.name,
-            () => Promise.resolve(projectAndroidAttackSurfaceEvidence(input)),
+            () =>
+              Promise.resolve(
+                projectAndroidAttackSurfaceEvidence(
+                  input,
+                  options.evidenceById,
+                ),
+              ),
           );
           if (!result.ok)
             return server.delivery.toCallToolResult(result, contract);

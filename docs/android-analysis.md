@@ -214,7 +214,10 @@ unknown.
 
 Both projections accept an optional `source_evidence`: pass the
 `inspect-android-package` Evidence for the attack surface, or the
-`inspect-android-class` Evidence for JNI names. The record is authenticated by
+`inspect-android-class` Evidence for JNI names. The advertisement shows the
+retained reference form `{kind: "retained-evidence", evidence_id}` that each
+adapter resolves against its session ledger; the complete inline record stays
+accepted for portable and CLI callers. The record is authenticated by
 its own identity first, so an edited copy with a stale `evidence_id` is refused.
 Every selected component, class and method is then checked against that record,
 the result copies its artifact subject and links its `evidence_id`, and the

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { evidenceSchema } from "../evidence.js";
+import { evidenceInputSchema } from "../evidenceReference.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import { androidManifestComponentSchema } from "./androidAnalysis.js";
 
@@ -122,10 +122,10 @@ export const androidAttackSurfaceInputSchema = z
         `At most ${String(ATTACK_SURFACE_COMPONENT_LIMIT)} components per call; pass a subset with component_coverage=partial to rank a larger inventory`,
       ),
     component_coverage: z.enum(["complete", "partial", "unknown"]),
-    source_evidence: evidenceSchema
+    source_evidence: evidenceInputSchema
       .optional()
       .describe(
-        "inspect_android_package Evidence these declarations came from; its artifact subject and identity are linked, and every component must match that inventory",
+        "inspect_android_package Evidence these declarations came from, as its retained reference or inline record; its artifact subject and identity are linked, and every component must match that inventory",
       ),
   })
   .superRefine((input, context) => {

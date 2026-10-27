@@ -28,7 +28,10 @@ export const registerProjectAndroidJniNamesTool = (
           const result = await logToolExecution(
             options.logger,
             contract.name,
-            () => Promise.resolve(projectAndroidJniNamesEvidence(input)),
+            () =>
+              Promise.resolve(
+                projectAndroidJniNamesEvidence(input, options.evidenceById),
+              ),
           );
           if (!result.ok)
             return server.delivery.toCallToolResult(result, contract);

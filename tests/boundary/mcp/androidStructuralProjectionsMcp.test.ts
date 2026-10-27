@@ -33,6 +33,19 @@ it(
     const names = new Set(tools.map(({ name }) => name));
     expect(names.has("project_android_jni_names")).toBe(true);
     expect(names.has("project_android_attack_surface")).toBe(true);
+    // The advertisement shows source_evidence as its retained reference so a
+    // complete producer record does not repeat its bytes on every turn; the
+    // canonical parser still accepts the inline record.
+    for (const name of [
+      "project_android_jni_names",
+      "project_android_attack_surface",
+    ]) {
+      const schema = JSON.stringify(
+        tools.find((tool) => tool.name === name)?.inputSchema ?? {},
+      );
+      expect(schema).toContain("retained-evidence");
+      expect(schema).not.toContain("normalized_result");
+    }
 
     const jni = await client.callTool({
       name: "project_android_jni_names",

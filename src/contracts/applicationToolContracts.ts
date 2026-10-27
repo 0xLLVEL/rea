@@ -34,6 +34,7 @@ import { androidApplicationProjectionResultSchema } from "../domain/android/andr
 import { appleApplicationProjectionResultSchema } from "../domain/apple/appleApplication.js";
 import { harmonyApplicationProjectionResultSchema } from "../domain/harmony/harmonyApplication.js";
 import type { ToolContract } from "./toolContractTypes.js";
+import { advertiseSourceEvidenceReference } from "./sourceEvidenceAdvertisement.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import {
@@ -334,6 +335,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     kind: "application",
     inputSchema: androidJniNamesInputSchema,
     outputSchema: evidenceResultOf(androidJniNamesResultSchema),
+    advertisedInputTransform: advertiseSourceEvidenceReference,
     examples: [
       {
         title: "Project expected JNI names for native methods",
@@ -358,6 +360,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     kind: "application",
     inputSchema: androidAttackSurfaceInputSchema,
     outputSchema: evidenceResultOf(androidAttackSurfaceResultSchema),
+    advertisedInputTransform: advertiseSourceEvidenceReference,
     examples: [
       {
         title: "Rank exported components from package declarations",

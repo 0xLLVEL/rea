@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createEvidence } from "../../domain/evidence.js";
+import { EvidenceReferenceError } from "../../domain/evidenceErrors.js";
 import { ANDROID_APPLICATION_PROVIDER } from "../../domain/investigationProviders.js";
 import { projectAndroidJniNamesEvidence } from "./AndroidJniNamesService.js";
 
@@ -92,6 +93,45 @@ describe("projectAndroidJniNamesEvidence", () => {
       ok: false,
       error: { _tag: "AnalysisInputError" },
     });
+  });
+
+  it("resolves a retained Evidence reference through the session lookup", () => {
+    const source = classEvidence();
+    const result = projectAndroidJniNamesEvidence(
+      {
+        class_name: "pkg.Native",
+        methods: [{ method_name: "nativeInit", dex_descriptor: "(I)V" }],
+        source_evidence: {
+          kind: "retained-evidence",
+          evidence_id: source.evidence_id,
+        },
+      },
+      (evidenceId) => (evidenceId === source.evidence_id ? source : undefined),
+    );
+    if (!result.ok) throw result.error;
+    expect(result.value.evidence_links).toEqual([source.evidence_id]);
+    expect(result.value.parameters).toMatchObject({
+      source_evidence_id: source.evidence_id,
+    });
+    expect(result.value.subject).toMatchObject({
+      local_path: "/tmp/Example.apk",
+      format: "apk",
+    });
+  });
+
+  it("refuses a retained reference the session cannot resolve", () => {
+    const source = classEvidence();
+    const result = projectAndroidJniNamesEvidence({
+      class_name: "pkg.Native",
+      methods: [{ method_name: "nativeInit", dex_descriptor: "(I)V" }],
+      source_evidence: {
+        kind: "retained-evidence",
+        evidence_id: source.evidence_id,
+      },
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected the reference to stay unresolved");
+    expect(result.error).toBeInstanceOf(EvidenceReferenceError);
   });
 
   it("refuses methods the linked class Evidence does not report", () => {

@@ -9,15 +9,24 @@ import { analysisInputErrorFromIssues } from "../../domain/inputIssueProjection.
 import { err, ok, type Result } from "../../domain/result.js";
 import { ANDROID_APPLICATION_PROVIDER } from "../../domain/investigationProviders.js";
 import {
+  resolveEvidenceInput,
+  type EvidenceLookup,
+} from "../EvidenceInputResolver.js";
+import {
   authenticateComponentSelection,
   projectionSourceTarget,
 } from "./AndroidProjectionSource.js";
 
 const OPERATION = "project_android_attack_surface" as const;
 
-/** Project structural attack-surface facts from caller-selected package declarations. */
+/**
+ * Project structural attack-surface facts from caller-selected package
+ * declarations. A retained source reference resolves through the session's
+ * Evidence ledger before authentication; an inline record passes through.
+ */
 export const projectAndroidAttackSurfaceEvidence = (
   rawInput: unknown,
+  lookup?: EvidenceLookup,
 ): Result<Evidence, AnalysisError> => {
   const parsed = androidAttackSurfaceInputSchema.safeParse(rawInput);
   if (!parsed.success)
@@ -26,15 +35,18 @@ export const projectAndroidAttackSurfaceEvidence = (
         cause: parsed.error,
       }),
     );
-  const source = authenticateComponentSelection(
-    OPERATION,
-    parsed.data.source_evidence,
-    {
-      package_name: parsed.data.package_name,
-      component_coverage: parsed.data.component_coverage,
-      components: parsed.data.components,
-    },
-  );
+  const selected = parsed.data.source_evidence;
+  let linked: Evidence | undefined;
+  if (selected !== undefined) {
+    const resolved = resolveEvidenceInput(selected, lookup);
+    if (!resolved.ok) return resolved;
+    linked = resolved.value;
+  }
+  const source = authenticateComponentSelection(OPERATION, linked, {
+    package_name: parsed.data.package_name,
+    component_coverage: parsed.data.component_coverage,
+    components: parsed.data.components,
+  });
   if (!source.ok) return source;
   try {
     const result = projectAttackSurface({
