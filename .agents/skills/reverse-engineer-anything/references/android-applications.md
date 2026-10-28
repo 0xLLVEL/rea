@@ -31,6 +31,17 @@ Both projections refuse a component, class or method their source Evidence does
 not report, and both stay static: protection levels, reachability and
 exploitability remain unknown.
 
+For JNI implementations, discover `inspect_android_jni_bindings`. Select raw
+DEX class/method identities and optional descriptors, ABI or logical library
+paths. Prefer `detail: "summary"`; complete Evidence remains retained and
+`android-jni` views page declarations, libraries, candidates or binding rows
+with exact fields. Global native-pair ambiguity survives class selection.
+Preserve slot/relocation provenance and source coverage: matched means observed
+candidate presence; partial scans do not establish uniqueness or absence.
+This reads DEX/ELF bytes without loading the APK into the decompiler or executing
+target code. Runtime registration and loading remain unknown. See the
+[JNI guide](https://github.com/morluto/rea/blob/main/docs/android-analysis.md#link-native-declarations-to-jni-candidates).
+
 For an R8/ProGuard release build with its `mapping.txt`, pass the absolute
 `mapping_path` to `inspect_android_class` or `inspect_android_method`. Prefer
 `detail: "summary"` to receive normalized symbols or the selected body without
