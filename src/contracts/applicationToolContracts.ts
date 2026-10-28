@@ -1,3 +1,9 @@
+import { applicationInventoryProjectionInputSchema } from "../domain/mobileApplicationGraphProjection.js";
+import { z } from "zod";
+import {
+  sourceToBundleSummaryViewResultSchema,
+  sourceToBundlePageViewResultSchema,
+} from "../domain/analysisView/analysisView.js";
 import { applicationVersionComparisonResultSchema } from "../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { applicationFeatureTraceResultSchema } from "../domain/javascript/javascriptFeatureTraceSchemas.js";
 import { javaScriptSemanticTraceResultSchema } from "../domain/javascript/javascriptSemanticTraceSchemas.js";
@@ -17,18 +23,18 @@ import {
   reconstructionObligationLedgerSchema,
 } from "../domain/reconstructionObligationLedgerSchemas.js";
 import {
-  androidApplicationProjectionInputSchema,
-  androidApplicationProjectionResultSchema,
-} from "../domain/android/androidApplication.js";
+  androidJniNamesInputSchema,
+  androidJniNamesResultSchema,
+} from "../domain/android/androidJniNames.js";
 import {
-  appleApplicationProjectionInputSchema,
-  appleApplicationProjectionResultSchema,
-} from "../domain/apple/appleApplication.js";
-import {
-  harmonyApplicationProjectionInputSchema,
-  harmonyApplicationProjectionResultSchema,
-} from "../domain/harmony/harmonyApplication.js";
+  androidAttackSurfaceInputSchema,
+  androidAttackSurfaceResultSchema,
+} from "../domain/android/androidAttackSurface.js";
+import { androidApplicationProjectionResultSchema } from "../domain/android/androidApplication.js";
+import { appleApplicationProjectionResultSchema } from "../domain/apple/appleApplication.js";
+import { harmonyApplicationProjectionResultSchema } from "../domain/harmony/harmonyApplication.js";
 import type { ToolContract } from "./toolContractTypes.js";
+import { advertiseSourceEvidenceReference } from "./sourceEvidenceAdvertisement.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import {
@@ -52,7 +58,11 @@ const comparisonOutputSchema = evidenceResultOf(
   applicationVersionComparisonResultSchema,
 );
 const sourceToBundleOutputSchema = evidenceResultOf(
-  sourceToBundleComparisonResultSchema,
+  z.union([
+    sourceToBundleComparisonResultSchema,
+    sourceToBundleSummaryViewResultSchema,
+    sourceToBundlePageViewResultSchema,
+  ]),
 );
 const exportShapeComparisonOutputSchema = evidenceResultOf(
   javaScriptExportShapeComparisonResultSchema,
@@ -144,7 +154,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     name: "compare_source_to_bundle",
     ...toolContractMetadata("compare_source_to_bundle"),
     description:
-      "Compare a cryptographically committed HistoricalSourceGraph with authenticated JavaScript Application Graph Evidence supplied inline or by exact same-session retained reference. Uses explicit exact-digest, source-map path, current-path, suffix, and basename signals with stable weights. Classifies unchanged, modified, removed, split, merged, duplicated, and unknown; incomplete coverage and ambiguous weak signals never become absence or forced matches.",
+      "Compare a cryptographically committed HistoricalSourceGraph supplied inline or as reference {kind:file,path:absolute-local-JSON-path} with authenticated JavaScript Application Graph Evidence supplied inline or by exact same-session retained reference. Omitted view preserves the full report. Optional view {kind:summary} or {kind:source-to-bundle,collection:mappings|candidates,source_paths?,mapping_ids?,statuses?,fields?,offset?,limit?} retains the full parent and returns selected facts. Query it again using inspect_analysis_view. Empty filters select none; identity fields always remain. Candidate signals are opt-in; classifications use the full comparison. Page coverage never upgrades source coverage. Uses explicit exact-digest, source-map path, current-path, suffix, and basename signals with stable weights. Classifies unchanged, modified, removed, split, merged, duplicated, and unknown; incomplete coverage and ambiguous weak signals never become absence or forced matches.",
     kind: "application",
     inputSchema: compareSourceToBundleRequestSchema,
     outputSchema: sourceToBundleOutputSchema,
@@ -271,7 +281,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     description:
       "Project authenticated APK inventory_artifact Evidence into an execution-free Android application inventory. Reports exact component paths and hashes, runtime-family hints, and path-based bridge hypotheses without decoding DEX, executing the APK, or claiming observed runtime calls.",
     kind: "application",
-    inputSchema: androidApplicationProjectionInputSchema,
+    inputSchema: applicationInventoryProjectionInputSchema,
     outputSchema: evidenceResultOf(androidApplicationProjectionResultSchema),
     examples: [
       {
@@ -287,7 +297,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     description:
       "Project authenticated IPA, macOS .app directory, ZIP, or DMG inventory Evidence into an execution-free Apple application inventory. Reports application roots, nested bundles with path-convention roles (app extensions, XPC services, login items, privileged helpers, system extensions, frameworks), launchd plists, exact component paths and hashes, runtime-family hints, and path-based bridge hypotheses without parsing plist/CMS semantics or claiming observed runtime calls.",
     kind: "application",
-    inputSchema: appleApplicationProjectionInputSchema,
+    inputSchema: applicationInventoryProjectionInputSchema,
     outputSchema: evidenceResultOf(appleApplicationProjectionResultSchema),
     examples: [
       {
@@ -307,7 +317,7 @@ export const APPLICATION_TOOL_CONTRACTS = [
     description:
       "Project authenticated HarmonyOS HAP, HSP, or App Pack inventory Evidence into an execution-free application inventory. Reports packaging-model hints (Stage module.json versus FA config.json), exact component paths and hashes (manifests, Ark bytecode, resources, native libraries, JavaScript, signing), App Pack child packages, runtime-family hints, and path-based N-API bridge hypotheses without decoding Ark bytecode, parsing manifest semantics, or claiming observed runtime calls.",
     kind: "application",
-    inputSchema: harmonyApplicationProjectionInputSchema,
+    inputSchema: applicationInventoryProjectionInputSchema,
     outputSchema: evidenceResultOf(harmonyApplicationProjectionResultSchema),
     examples: [
       {
@@ -317,46 +327,49 @@ export const APPLICATION_TOOL_CONTRACTS = [
       },
     ],
   },
+  {
+    name: "project_android_jni_names",
+    ...toolContractMetadata("project_android_jni_names"),
+    description:
+      "Project expected JNI short/long symbol names and the JNA default-mapping name for caller-selected DEX methods without reading an APK or native library. Pass the dex_descriptor that inspect_android_class reports for each method; it may be omitted, and an omitted descriptor reports only the short name. Reports per-method mangled names, overload group sizes, and explicit unknowns for RegisterNatives registration, a custom JNA FunctionMapper, and runtime loading; a name match never establishes invocation. Pass the inspect_android_class Evidence as source_evidence to authenticate the selection and copy its artifact subject. At most 2000 methods and about 4 MiB of projected symbol text per call.",
+    kind: "application",
+    inputSchema: androidJniNamesInputSchema,
+    outputSchema: evidenceResultOf(androidJniNamesResultSchema),
+    advertisedInputTransform: advertiseSourceEvidenceReference,
+    examples: [
+      {
+        title: "Project expected JNI names for native methods",
+        input: {
+          class_name: "de.markusfisch.android.zxingcpp.ZxingCpp",
+          methods: [
+            {
+              method_name: "readYBuffer",
+              dex_descriptor:
+                "(Ljava/nio/ByteBuffer;IIIIIILde/markusfisch/android/zxingcpp/ZxingCpp$ReaderOptions;)Ljava/util/List;",
+            },
+          ],
+        },
+      },
+    ],
+  },
+  {
+    name: "project_android_attack_surface",
+    ...toolContractMetadata("project_android_attack_surface"),
+    description:
+      "Project structural attack-surface facts from the components that inspect_android_package reports. Separates exported components that an established permission source leaves unguarded from guarded ones, keeps unresolved permissions, provider readPermission/writePermission overrides and child path-permission guards guard-unknown, indexes intent actions, and reports foreground-service types and provider authorities without claiming protection levels, reachability, or exploitability. Pass that package Evidence as source_evidence to authenticate the components and copy its artifact subject. At most 1000 components per call.",
+    kind: "application",
+    inputSchema: androidAttackSurfaceInputSchema,
+    outputSchema: evidenceResultOf(androidAttackSurfaceResultSchema),
+    advertisedInputTransform: advertiseSourceEvidenceReference,
+    examples: [
+      {
+        title: "Rank exported components from package declarations",
+        input: {
+          package_name: "io.example",
+          components: [],
+          component_coverage: "complete",
+        },
+      },
+    ],
+  },
 ] as const satisfies readonly ToolContract[];
-
-/** Resolve one named application contract without relying on array position. */
-export function applicationToolContract(
-  name: "trace_application_feature",
-): (typeof APPLICATION_TOOL_CONTRACTS)[0];
-export function applicationToolContract(
-  name: "trace_javascript_semantics",
-): (typeof APPLICATION_TOOL_CONTRACTS)[1];
-export function applicationToolContract(
-  name: "compare_application_versions",
-): (typeof APPLICATION_TOOL_CONTRACTS)[2];
-export function applicationToolContract(
-  name: "compare_source_to_bundle",
-): (typeof APPLICATION_TOOL_CONTRACTS)[3];
-export function applicationToolContract(
-  name: "compare_javascript_export_shapes",
-): (typeof APPLICATION_TOOL_CONTRACTS)[4];
-export function applicationToolContract(
-  name: "build_reconstruction_obligation_ledger",
-): (typeof APPLICATION_TOOL_CONTRACTS)[5];
-export function applicationToolContract(
-  name: "evaluate_reconstruction_coverage",
-): (typeof APPLICATION_TOOL_CONTRACTS)[6];
-export function applicationToolContract(
-  name: "project_android_application_graph",
-): (typeof APPLICATION_TOOL_CONTRACTS)[7];
-export function applicationToolContract(
-  name: "project_apple_application_graph",
-): (typeof APPLICATION_TOOL_CONTRACTS)[8];
-export function applicationToolContract(
-  name: "project_harmony_application_graph",
-): (typeof APPLICATION_TOOL_CONTRACTS)[9];
-export function applicationToolContract(
-  name: (typeof APPLICATION_TOOL_CONTRACTS)[number]["name"],
-): (typeof APPLICATION_TOOL_CONTRACTS)[number] {
-  const contract = APPLICATION_TOOL_CONTRACTS.find(
-    ({ name: candidate }) => candidate === name,
-  );
-  if (contract === undefined)
-    throw new Error(`Missing application tool contract: ${name}`);
-  return contract;
-}

@@ -1,12 +1,17 @@
 #!/usr/bin/env node
+import {
+  assertFeatureTrace,
+  findMappedNonFunction,
+} from "./lib/ida-feature-trace.mjs";
 import { requireMcpToolError } from "./lib/mcp-verifier-results.mjs";
+import { withVerifierResourceOwner } from "./lib/verifier-file-resources.mjs";
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { access, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs, promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
@@ -49,20 +54,25 @@ const [
   { toolContract },
   { evidenceSchema },
   { functionDossierSchema },
-  { readIdaConfiguration },
+  { readIdaConfiguration, idaCompatibilityProfile },
   { createIdaMcpConnection },
   { idaAddressSchema },
 ] = await Promise.all([
   importBuilt("contracts/toolContracts.js"),
   importBuilt("domain/evidence.js"),
-  importBuilt("domain/hopperValues.js"),
+  importBuilt("domain/native/functionDossier.js"),
   importBuilt("ida/IdaConfiguration.js"),
   importBuilt("ida/IdaMcpConnection.js"),
   importBuilt("ida/IdaProtocolValues.js"),
 ]);
-const registration = readIdaConfiguration(process.env.REA_IDA_MCP_CONFIG);
-if (!registration.ok) throw registration.error;
-const config = registration.value;
+const config = await withVerifierResourceOwner(async (resourceScope) => {
+  const registration = await readIdaConfiguration(
+    process.env.REA_IDA_MCP_CONFIG,
+    { resourceScope },
+  );
+  if (!registration.ok) throw registration.error;
+  return registration.value;
+});
 if (
   config.protocol === "native" &&
   (values["second-procedure"] === undefined ||
@@ -81,8 +91,7 @@ const environment = Object.fromEntries(
 const report = {
   passed: false,
   mode: config.mode,
-  protocol:
-    config.protocol ?? (config.mode === "attached" ? "legacy" : "modern"),
+  protocol: idaCompatibilityProfile(config).protocol,
   checks: [],
   observations: [],
   unverified: [],
@@ -177,6 +186,7 @@ const mcp = async (cliDossier) => {
     opened = true;
     const analyzed = await call("analyze_function", {
       procedure: values.procedure,
+      detail: "complete",
     });
     const dossier = functionDossierSchema.parse(observe(analyzed));
     assert.deepEqual(dossier.procedure, cliDossier.procedure);
@@ -260,6 +270,61 @@ const mcp = async (cliDossier) => {
             );
           break;
       }
+    }
+    if (config.mode === "headless") {
+      const documents = observe(await call("list_documents", {}));
+      assert.equal(documents.length, 1);
+      assert.equal(basename(documents[0]), basename(target));
+      assert.ok(
+        !workspaces.has(dirname(documents[0])),
+        "list_documents reported the private workspace copy.",
+      );
+      const resolveAt = async (address) =>
+        observe(await call("resolve_containing_procedure", { address }));
+      const instructionAddresses = dossier.assembly
+        .map((line) => /^(0x[0-9a-f]+)/iu.exec(line)?.[1])
+        .filter((address) => address !== undefined);
+      const queries = [
+        dossier.procedure.address,
+        ...instructionAddresses.slice(1, 2),
+      ];
+      for (const queried of queries) {
+        const containing = await resolveAt(queried);
+        assert.equal(containing.found, true);
+        assert.equal(containing.procedure.address, dossier.procedure.address);
+        assert.equal(containing.procedure.name, dossier.procedure.name);
+      }
+      const unmapped = await resolveAt("0xffffffffffffff00");
+      assert.equal(unmapped.found, false);
+      assert.equal(unmapped.reason, "outside_segments");
+      const strings = observe(await call("list_strings", {}));
+      const mappedString = await findMappedNonFunction(strings, resolveAt);
+      if (mappedString === undefined)
+        report.unverified.push(
+          "Mapped non-function containment: no string of the target is mapped outside every function.",
+        );
+      const context = await client.callTool({
+        name: "inspect_address_context",
+        arguments: { address: dossier.procedure.address },
+      });
+      assert.notEqual(context.isError, true);
+      const contextResult = context.structuredContent.result;
+      assert.equal(contextResult.document, documents[0]);
+      assert.equal(contextResult.procedure.state, "available");
+      assert.equal(
+        contextResult.procedure.value.procedure.address,
+        dossier.procedure.address,
+      );
+      const traced = await client.callTool({
+        name: "trace_feature",
+        arguments: { query: dossier.procedure.name },
+      });
+      assert.notEqual(traced.isError, true);
+      const trace = traced.structuredContent.normalized_result;
+      assertFeatureTrace(trace, dossier.procedure);
+      report.checks.push(
+        "headless containing procedures, the admitted program as the document, address context, and the procedure match and references of feature tracing",
+      );
     }
     if (values["expected-string"] === undefined)
       report.unverified.push(
